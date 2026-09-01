@@ -1,0 +1,46 @@
+{
+  "name": "yts-orbital",
+  "version": "0.1.0",
+  "description": "Satellite operations and orbital intelligence powered by CelesTrak GP data and SGP4.",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "satellite",
+    "sgp4",
+    "orbital-mechanics",
+    "three.js"
+  ],
+  "author": "York Tech Services",
+  "license": "MIT",
+  "dependencies": {
+    "@react-three/drei": "^10.7.8",
+    "@react-three/fiber": "^9.7.0",
+    "lucide-react": "^1.38.0",
+    "next": "^16.3.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "satellite.js": "6.0.1",
+    "three": "^0.185.1",
+    "topojson-client": "^3.1.0",
+    "world-atlas": "^2.0.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.4.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@types/topojson-client": "^3.1.5",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.3.4",
+    "postcss": "^8.5.26",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^6.0.3",
+    "vitest": "^3.2.4"
+  }
+}
