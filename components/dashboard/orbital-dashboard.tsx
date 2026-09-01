@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity, AlertTriangle, Check, ChevronRight, CircleHelp, Clock3, Crosshair,
+  Activity, AlertTriangle, Check, ChevronRight, CircleHelp, Crosshair,
   Database, Gauge, LocateFixed, Pause, Play, RotateCcw, Search, Satellite, X,
 } from "lucide-react";
 import type { SatRec } from "satellite.js";
@@ -54,24 +54,78 @@ function Metric({ label, value, unit }: { label: string; value: string; unit?: s
 }
 
 function LoadingScreen({ ready = false, onStart }: { ready?: boolean; onStart?: () => void }) {
+  const [elapsedMs, setElapsedMs] = useState(0);
+
+  const startupSteps = [
+    { text: "Initializing SGP4 engine", startMs: 820, durationMs: 620 },
+    { text: "Fetching current GP elements", startMs: 1540, durationMs: 860 },
+    { text: "Preparing visualization", startMs: 2560, durationMs: 760 },
+  ] as const;
+
+  const totalSequenceMs = 4200;
+  const progress = Math.min(100, Math.round((elapsedMs / totalSequenceMs) * 100));
+  const sequenceStep = elapsedMs >= 320 ? 1 : 0;
+  const typedSteps = startupSteps.map((step) => {
+    if (elapsedMs < step.startMs) {
+      return 0;
+    }
+
+    const typedRatio = Math.min(1, (elapsedMs - step.startMs) / step.durationMs);
+    return Math.min(step.text.length, Math.ceil(typedRatio * step.text.length));
+  });
+  const sequenceComplete = typedSteps.every((typedLength, index) => typedLength >= startupSteps[index].text.length) && progress >= 100;
+  const viewerReady = ready && sequenceComplete;
+
+  useEffect(() => {
+    const startTime = performance.now();
+    const timer = window.setInterval(() => {
+      const nextElapsed = Math.min(totalSequenceMs, performance.now() - startTime);
+      setElapsedMs(nextElapsed);
+
+      if (nextElapsed >= totalSequenceMs) {
+        window.clearInterval(timer);
+      }
+    }, 50);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
   return (
     <main className="loading-screen">
-      <div className="loader-orbit"><BrandGlobe loading /></div>
-      <p className="eyebrow">YTS ORBITAL / STARTUP SEQUENCE</p>
-      <h1>{ready ? "ORBITAL CATALOG READY" : "INITIALIZING ORBITAL CATALOG"}</h1>
+      <div className={`loader-orbit startup-reveal ${sequenceStep >= 1 ? "is-visible" : ""}`}><BrandGlobe loading /></div>
+      <p className={`eyebrow startup-reveal ${elapsedMs >= 540 ? "is-visible" : ""}`}>YTS ORBITAL / STARTUP SEQUENCE</p>
+      <h1 className={`startup-reveal startup-headline ${elapsedMs >= 720 ? "is-visible" : ""}`}>{ready ? "ORBITAL CATALOG READY" : "INITIALIZING ORBITAL CATALOG"}</h1>
       <div className="loading-steps">
-        <span><Check size={14} /> Initializing SGP4 engine</span>
-        <span>{ready ? <Check size={14} /> : <Activity size={14} />} Fetching current GP elements{ready ? "" : "..."}</span>
-        <span>{ready ? <Check size={14} /> : <Clock3 size={14} />} Preparing visualization{ready ? "" : "..."}</span>
+        {startupSteps.map((step, index) => {
+          const typedLength = typedSteps[index];
+          const isVisible = typedLength > 0;
+          const isComplete = typedLength >= step.text.length;
+
+          return (
+            <span key={step.text} className={`startup-step ${isVisible ? "is-visible" : ""} ${isComplete ? "is-complete" : ""}`}>
+              <Check size={14} />
+              <span className="startup-step__text">
+                {step.text.slice(0, typedLength)}
+                {isVisible && !isComplete && <i className="startup-cursor" aria-hidden="true" />}
+              </span>
+            </span>
+          );
+        })}
       </div>
       {ready && <>
-        <p className="loading-copy">The catalog is loaded. Start the viewer when you are ready.</p>
-        <button className="loading-start-button" onClick={onStart} aria-label="Start viewer">
-          <span className="loading-start-button__prompt" aria-hidden="true">MISSION CONTROL</span>
+        <p className={`loading-copy startup-reveal ${elapsedMs >= 3320 ? "is-visible" : ""}`}>The catalog is loaded. Start the viewer when you are ready.</p>
+        <button className={`loading-start-button ${viewerReady ? "is-ready" : ""}`} onClick={onStart} aria-label="Start viewer" disabled={!viewerReady}>
+          <span className="loading-start-button__prompt" aria-hidden="true">
+            <span>MISSION CONTROL</span>
+            <span className="loading-start-button__status">{viewerReady ? "LAUNCH AUTHORIZATION READY" : `SYSTEM LOAD ${progress}%`}</span>
+          </span>
           <span className="loading-start-button__core">
             <span className="loading-start-button__label">ENTER VIEWER</span>
             <ChevronRight size={16} />
           </span>
+          <span className="loading-start-button__bar" aria-hidden="true"><b style={{ width: `${progress}%` }} /></span>
         </button>
       </>}
     </main>
