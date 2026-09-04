@@ -73,14 +73,19 @@ export type EarthViewMode = "earth" | "location" | "satellite";
 export interface LocationDetails {
   primaryName: string;
   locality?: string;
+  county?: string;
   region?: string;
   country?: string;
+  continent?: string;
   nearestCity?: string;
   bodyOfWater?: string;
   geographicFeature?: string;
   population?: number;
   populationYear?: string;
   populationScope?: string;
+  populationSource?: "feature" | "settlement";
+  elevationMeters?: number;
+  addressType?: string;
   isRemote: boolean;
   contextLabel: string;
   attribution: string;
@@ -90,6 +95,7 @@ export interface SelectedEarthLocation {
   latitude: number;
   longitude: number;
   displayName?: string;
+  labelHint?: string;
   source: "globe" | "search";
   lookupStatus?: "loading" | "resolved" | "unavailable";
   details?: LocationDetails;

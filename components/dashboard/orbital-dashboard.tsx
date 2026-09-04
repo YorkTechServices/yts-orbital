@@ -32,6 +32,8 @@ const DEFAULT_OBSERVER: ObserverLocation = {
   altitudeKm: 0.1,
 };
 
+type MobileInfoTab = "location" | "satellites" | "layers";
+
 const HEALTHY_FEED_CHECK_MS = 5 * 60_000;
 const DEGRADED_FEED_RETRY_MS = 60_000;
 
@@ -199,6 +201,72 @@ function GlobeSelectionSummary({ location }: { location: SelectedEarthLocation |
   );
 }
 
+function SearchPanel({
+  query,
+  results,
+  onQueryChange,
+  onClear,
+  onSelectSatellite,
+}: {
+  query: string;
+  results: SatelliteCatalogEntry[];
+  onQueryChange: (value: string) => void;
+  onClear: () => void;
+  onSelectSatellite: (entry: SatelliteCatalogEntry) => void;
+}) {
+  return (
+    <section className="panel search-panel">
+      <p className="eyebrow">ACTIVE OBJECT CATALOG</p><h2>SPACECRAFT SELECT</h2>
+      <div className="search-box"><Search size={16} /><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Name, NORAD ID, designator..." aria-label="Search spacecraft" />{query && <button type="button" onClick={onClear} aria-label="Clear search"><X size={14} /></button>}</div>
+      {query && <div className="search-results">{results.map((entry) => <button type="button" key={entry.noradId} onClick={() => onSelectSatellite(entry)}><span>{entry.name}<small>{entry.objectId || "NO DESIGNATOR"}</small></span><b>{entry.noradId}</b></button>)}{!results.length && <p>No matching active objects.</p>}</div>}
+    </section>
+  );
+}
+
+function FeaturedPanel({ featured, selectedId, onSelectSatellite }: {
+  featured: SatelliteCatalogEntry[];
+  selectedId: number | null;
+  onSelectSatellite: (entry: SatelliteCatalogEntry) => void;
+}) {
+  return (
+    <section className="panel featured-panel">
+      <div className="panel-heading"><div><p className="eyebrow">QUICK ACCESS</p><h2>FEATURED</h2></div><Satellite size={18} /></div>
+      {featured.map((entry) => <button type="button" className={entry.noradId === selectedId ? "active" : ""} key={entry.noradId} onClick={() => onSelectSatellite(entry)}><span><i />{entry.name}<small>NORAD {entry.noradId}</small></span><ChevronRight size={15} /></button>)}
+    </section>
+  );
+}
+
+function IdentityPanel({ selected }: { selected: OmmRecord }) {
+  return (
+    <section className="panel identity-panel">
+      <p className="eyebrow">SELECTED OBJECT</p><h1>{selected.OBJECT_NAME}</h1><div className="norad-chip">NORAD {selected.NORAD_CAT_ID}</div>
+      <dl><div><dt>International designator</dt><dd>{selected.OBJECT_ID || "UNAVAILABLE"}</dd></div><div><dt>Object type</dt><dd>{selected.OBJECT_TYPE || "UNSPECIFIED"}</dd></div><div><dt>Epoch</dt><dd>{formatUtc(selected.EPOCH, true)} UTC</dd></div><div><dt>Origin</dt><dd>{selected.COUNTRY_CODE || "UNSPECIFIED"}</dd></div></dl>
+    </section>
+  );
+}
+
+function SatelliteStatePanels({ state, characteristics, selected }: {
+  state: PropagatedState | null;
+  characteristics: OrbitalCharacteristics;
+  selected: OmmRecord;
+}) {
+  return <>
+    <section className="panel state-panel">
+      <div className="panel-heading"><div><p className="eyebrow">CURRENT SOLUTION</p><h2>ORBITAL STATE</h2></div><Gauge size={18} /></div>
+      {state ? <div className="metric-grid"><Metric label="LATITUDE" value={formatCoordinate(state.latitude, "N", "S")} /><Metric label="LONGITUDE" value={formatCoordinate(state.longitude, "E", "W")} /><Metric label="ALTITUDE" value={state.altitudeKm.toFixed(2)} unit="km" /><Metric label="VELOCITY" value={state.velocityKmS.toFixed(3)} unit="km/s" /></div> : <p className="propagation-error">A valid state could not be propagated from these elements.</p>}
+    </section>
+    <section className="panel characteristics-panel">
+      <div className="panel-heading"><div><p className="eyebrow"><GlossaryTerm label="DERIVED PARAMETERS" definition={GLOSSARY.derived} /></p><h2>ORBIT CHARACTERISTICS</h2></div><GlossaryTerm className="orbit-class" label={characteristics.orbitClass} definition={GLOSSARY[characteristics.orbitClass.toLowerCase() as "leo" | "meo" | "geo"] ?? "A highly stretched orbit. The satellite comes much closer to Earth on one part of its path and travels much farther away on another."} /></div>
+      <dl><div><dt><GlossaryTerm label="Inclination" definition={GLOSSARY.inclination} /></dt><dd>{selected.INCLINATION.toFixed(4)}°</dd></div><div><dt><GlossaryTerm label="Eccentricity" definition={GLOSSARY.eccentricity} /></dt><dd>{selected.ECCENTRICITY.toFixed(7)}</dd></div><div><dt><GlossaryTerm label="Mean motion" definition={GLOSSARY.meanMotion} /></dt><dd>{selected.MEAN_MOTION.toFixed(6)} rev/day</dd></div><div><dt><GlossaryTerm label="Period" definition={GLOSSARY.period} /></dt><dd>{characteristics.periodMinutes.toFixed(2)} min</dd></div><div><dt><GlossaryTerm label="Perigee altitude" definition={GLOSSARY.perigee} /></dt><dd>{characteristics.perigeeAltitudeKm.toFixed(1)} km</dd></div><div><dt><GlossaryTerm label="Apogee altitude" definition={GLOSSARY.apogee} /></dt><dd>{characteristics.apogeeAltitudeKm.toFixed(1)} km</dd></div></dl>
+    </section>
+    <QualityPanel characteristics={characteristics} eccentricity={selected.ECCENTRICITY} />
+  </>;
+}
+
+function MethodologyPanel({ onOpenGuide }: { onOpenGuide: () => void }) {
+  return <section className="panel methodology-card"><div><p className="eyebrow">METHOD / SOURCE</p><h2>PUBLIC ELEMENTS → ORBITAL STATE</h2></div><p>Positions are computed from cached CelesTrak GP orbital elements using SGP4. ECI output is transformed into Earth-fixed and geodetic coordinates locally in your browser.</p><button type="button" onClick={onOpenGuide}>View methodology <ChevronRight size={14} /></button></section>;
+}
+
 function EarthOnlyScreen({
   message, retry, clock, observer, selectedLocation, mode, scaleLabel,
   showBanner, onDismissBanner, onModeChange, onLocationSelect, onClear, onSetObserver, onScaleChange,
@@ -330,6 +398,7 @@ export default function OrbitalDashboard() {
   const [selectedEarthLocation, setSelectedEarthLocation] = useState<SelectedEarthLocation | null>(null);
   const [returnViewMode, setReturnViewMode] = useState<EarthViewMode>("satellite");
   const [earthScale, setEarthScale] = useState("GLOBAL VIEW");
+  const [mobileInfoTab, setMobileInfoTab] = useState<MobileInfoTab>("satellites");
   const locationRequestId = useRef(0);
   const feedWasUnavailable = useRef(false);
 
@@ -445,8 +514,10 @@ export default function OrbitalDashboard() {
     if (!selectedEarthLocation) setReturnViewMode(earthViewMode === "location" ? "satellite" : earthViewMode);
     setSelectedEarthLocation({ ...location, lookupStatus: "loading", details: undefined });
     setEarthViewMode("location");
+    setMobileInfoTab("location");
     try {
-      const response = await fetch(`/api/reverse-geocode?lat=${location.latitude}&lon=${location.longitude}`);
+      const hint = location.labelHint ?? location.displayName;
+      const response = await fetch(`/api/reverse-geocode?lat=${location.latitude}&lon=${location.longitude}${hint ? `&hint=${encodeURIComponent(hint)}` : ""}`);
       const payload = await response.json() as ReverseGeocodeResponse | { error: string };
       if (!response.ok || "error" in payload) throw new Error("Geographic context unavailable");
       if (locationRequestId.current !== requestId) return;
@@ -497,7 +568,17 @@ export default function OrbitalDashboard() {
 
   const deltaMs = simulationTime.getTime() - clock.getTime();
   const isSatelliteView = earthViewMode === "satellite";
-  const selectSatellite = (entry: SatelliteCatalogEntry) => { setSelected(null); setSelectedId(entry.noradId); setQuery(""); };
+  const selectSatellite = (entry: SatelliteCatalogEntry) => {
+    setSelected(null);
+    setSelectedId(entry.noradId);
+    setQuery("");
+    setEarthViewMode("satellite");
+    setMobileInfoTab("satellites");
+  };
+  const changeEarthViewMode = (mode: EarthViewMode) => {
+    setEarthViewMode(mode);
+    setMobileInfoTab(mode === "satellite" ? "satellites" : "location");
+  };
   const jump = (hours: number) => { setSimulationTime((time) => new Date(time.getTime() + hours * 3_600_000)); setIsLive(false); setPlaybackSpeed(0); };
   const returnLive = () => { setSimulationTime(new Date()); setIsLive(true); setPlaybackSpeed(1); };
 
@@ -523,28 +604,18 @@ export default function OrbitalDashboard() {
 
       <main className="console-grid">
         <aside className="left-rail">
-          <section className="panel search-panel">
-            <p className="eyebrow">ACTIVE OBJECT CATALOG</p><h2>SPACECRAFT SELECT</h2>
-            <div className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name, NORAD ID, designator..." aria-label="Search spacecraft" />{query && <button onClick={() => setQuery("")} aria-label="Clear search"><X size={14} /></button>}</div>
-            {query && <div className="search-results">{results.map((entry) => <button key={entry.noradId} onClick={() => selectSatellite(entry)}><span>{entry.name}<small>{entry.objectId || "NO DESIGNATOR"}</small></span><b>{entry.noradId}</b></button>)}{!results.length && <p>No matching active objects.</p>}</div>}
-          </section>
+          <SearchPanel query={query} results={results} onQueryChange={setQuery} onClear={() => setQuery("")} onSelectSatellite={selectSatellite} />
           <EarthExplorerPanel
             mode={earthViewMode}
             selectedLocation={selectedEarthLocation}
             scaleLabel={earthScale}
-            onModeChange={setEarthViewMode}
+            onModeChange={changeEarthViewMode}
             onLocationSelect={selectEarthLocation}
             onClear={clearEarthLocation}
             onSetObserver={setSelectedAsObserver}
           />
-          <section className="panel featured-panel">
-            <div className="panel-heading"><div><p className="eyebrow">QUICK ACCESS</p><h2>FEATURED</h2></div><Satellite size={18} /></div>
-            {catalogData.featured.map((entry) => <button className={entry.noradId === selectedId ? "active" : ""} key={entry.noradId} onClick={() => selectSatellite(entry)}><span><i />{entry.name}<small>NORAD {entry.noradId}</small></span><ChevronRight size={15} /></button>)}
-          </section>
-          <section className="panel identity-panel">
-            <p className="eyebrow">SELECTED OBJECT</p><h1>{selected.OBJECT_NAME}</h1><div className="norad-chip">NORAD {selected.NORAD_CAT_ID}</div>
-            <dl><div><dt>International designator</dt><dd>{selected.OBJECT_ID || "UNAVAILABLE"}</dd></div><div><dt>Object type</dt><dd>{selected.OBJECT_TYPE || "UNSPECIFIED"}</dd></div><div><dt>Epoch</dt><dd>{formatUtc(selected.EPOCH, true)} UTC</dd></div><div><dt>Origin</dt><dd>{selected.COUNTRY_CODE || "UNSPECIFIED"}</dd></div></dl>
-          </section>
+          <FeaturedPanel featured={catalogData.featured} selectedId={selectedId} onSelectSatellite={selectSatellite} />
+          <IdentityPanel selected={selected} />
         </aside>
 
         <section className="center-stage">
@@ -562,22 +633,24 @@ export default function OrbitalDashboard() {
             <div className="time-controls"><button onClick={() => jump(-1)}>−1 HR</button><button className={isLive ? "active" : ""} onClick={returnLive}><Crosshair size={14} /> NOW</button><button onClick={() => jump(1)}>+1 HR</button><div className="playback"><button aria-label="Pause simulation" className={!playbackSpeed ? "active" : ""} onClick={() => { setPlaybackSpeed(0); setIsLive(false); }}><Pause size={14} /></button>{[1, 60, 300].map((speed) => <button key={speed} className={!isLive && playbackSpeed === speed ? "active" : ""} onClick={() => { setPlaybackSpeed(speed); setIsLive(false); }}><Play size={11} />{speed}x</button>)}</div></div>
             <div className="slider-wrap"><span>−6h</span><input aria-label="Simulation time offset" type="range" min="-6" max="6" step="0.05" value={Math.max(-6, Math.min(6, deltaMs / 3_600_000))} onChange={(event) => { setSimulationTime(new Date(Date.now() + Number(event.target.value) * 3_600_000)); setIsLive(false); setPlaybackSpeed(0); }} /><span>+6h</span></div>
           </section>
+          <section className="panel mobile-info-panel" aria-label="Mobile information panel">
+            <div className="mobile-info-tabs" role="tablist" aria-label="Mobile information sections">
+              <button type="button" role="tab" className={mobileInfoTab === "location" ? "active" : ""} aria-selected={mobileInfoTab === "location"} onClick={() => setMobileInfoTab("location")}>LOCATION</button>
+              <button type="button" role="tab" className={mobileInfoTab === "satellites" ? "active" : ""} aria-selected={mobileInfoTab === "satellites"} onClick={() => setMobileInfoTab("satellites")}>SATELLITES</button>
+              <button type="button" role="tab" className={mobileInfoTab === "layers" ? "active" : ""} aria-selected={mobileInfoTab === "layers"} onClick={() => setMobileInfoTab("layers")}>LAYERS</button>
+            </div>
+            <div className={mobileInfoTab === "location" ? "mobile-info-pane active" : "mobile-info-pane"}><EarthExplorerPanel mode={earthViewMode} selectedLocation={selectedEarthLocation} scaleLabel={earthScale} onModeChange={changeEarthViewMode} onLocationSelect={selectEarthLocation} onClear={clearEarthLocation} onSetObserver={setSelectedAsObserver} /></div>
+            <div className={mobileInfoTab === "satellites" ? "mobile-info-pane active" : "mobile-info-pane"}><div className="mobile-stack"><SearchPanel query={query} results={results} onQueryChange={setQuery} onClear={() => setQuery("")} onSelectSatellite={selectSatellite} /><FeaturedPanel featured={catalogData.featured} selectedId={selectedId} onSelectSatellite={selectSatellite} /><IdentityPanel selected={selected} /><SatelliteStatePanels state={state} characteristics={characteristics} selected={selected} /></div></div>
+            <div className={mobileInfoTab === "layers" ? "mobile-info-pane active" : "mobile-info-pane"}><div className="mobile-stack"><ObserverPanel observer={observer} setObserver={setObserver} passes={passes} /><MethodologyPanel onOpenGuide={() => setAboutOpen(true)} /></div></div>
+          </section>
         </section>
 
         <aside className="right-rail">
-          <section className="panel state-panel">
-            <div className="panel-heading"><div><p className="eyebrow">CURRENT SOLUTION</p><h2>ORBITAL STATE</h2></div><Gauge size={18} /></div>
-            {state ? <div className="metric-grid"><Metric label="LATITUDE" value={formatCoordinate(state.latitude, "N", "S")} /><Metric label="LONGITUDE" value={formatCoordinate(state.longitude, "E", "W")} /><Metric label="ALTITUDE" value={state.altitudeKm.toFixed(2)} unit="km" /><Metric label="VELOCITY" value={state.velocityKmS.toFixed(3)} unit="km/s" /></div> : <p className="propagation-error">A valid state could not be propagated from these elements.</p>}
-          </section>
-          <section className="panel characteristics-panel">
-            <div className="panel-heading"><div><p className="eyebrow"><GlossaryTerm label="DERIVED PARAMETERS" definition={GLOSSARY.derived} /></p><h2>ORBIT CHARACTERISTICS</h2></div><GlossaryTerm className="orbit-class" label={characteristics.orbitClass} definition={GLOSSARY[characteristics.orbitClass.toLowerCase() as "leo" | "meo" | "geo"] ?? "A highly stretched orbit. The satellite comes much closer to Earth on one part of its path and travels much farther away on another."} /></div>
-            <dl><div><dt><GlossaryTerm label="Inclination" definition={GLOSSARY.inclination} /></dt><dd>{selected.INCLINATION.toFixed(4)}°</dd></div><div><dt><GlossaryTerm label="Eccentricity" definition={GLOSSARY.eccentricity} /></dt><dd>{selected.ECCENTRICITY.toFixed(7)}</dd></div><div><dt><GlossaryTerm label="Mean motion" definition={GLOSSARY.meanMotion} /></dt><dd>{selected.MEAN_MOTION.toFixed(6)} rev/day</dd></div><div><dt><GlossaryTerm label="Period" definition={GLOSSARY.period} /></dt><dd>{characteristics.periodMinutes.toFixed(2)} min</dd></div><div><dt><GlossaryTerm label="Perigee altitude" definition={GLOSSARY.perigee} /></dt><dd>{characteristics.perigeeAltitudeKm.toFixed(1)} km</dd></div><div><dt><GlossaryTerm label="Apogee altitude" definition={GLOSSARY.apogee} /></dt><dd>{characteristics.apogeeAltitudeKm.toFixed(1)} km</dd></div></dl>
-          </section>
-          <QualityPanel characteristics={characteristics} eccentricity={selected.ECCENTRICITY} />
+          <SatelliteStatePanels state={state} characteristics={characteristics} selected={selected} />
         </aside>
       </main>
 
-      <div className="lower-grid"><ObserverPanel observer={observer} setObserver={setObserver} passes={passes} /><section className="panel methodology-card"><div><p className="eyebrow">METHOD / SOURCE</p><h2>PUBLIC ELEMENTS → ORBITAL STATE</h2></div><p>Positions are computed from cached CelesTrak GP orbital elements using SGP4. ECI output is transformed into Earth-fixed and geodetic coordinates locally in your browser.</p><button onClick={() => setAboutOpen(true)}>View methodology <ChevronRight size={14} /></button></section></div>
+      <div className="lower-grid"><ObserverPanel observer={observer} setObserver={setObserver} passes={passes} /><MethodologyPanel onOpenGuide={() => setAboutOpen(true)} /></div>
 
       <footer><span>YTS Orbital v0.1</span><a href="https://yorktechservices.com" target="_blank" rel="noreferrer">York Tech Services</a><a href="https://celestrak.org" target="_blank" rel="noreferrer">Orbital data provided by CelesTrak</a><span>Not for safety-critical operations</span></footer>
 

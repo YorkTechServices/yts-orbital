@@ -3,6 +3,8 @@ import type { LocationDetails, ReverseGeocodeResponse } from "@/types/orbital";
 
 const NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
 const BIG_DATA_CLOUD_URL = "https://api.bigdatacloud.net/data/reverse-geocode-client";
+const OPEN_METEO_ELEVATION_URL = "https://api.open-meteo.com/v1/elevation";
+const OPEN_METEO_GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search";
 
 interface NominatimReverseResult {
   error?: string;
@@ -30,6 +32,29 @@ interface BigDataCloudResult {
   localityInfo?: {
     informative?: GeographicEntry[];
   };
+}
+
+interface ElevationResult {
+  elevation?: number[];
+}
+
+const SETTLEMENT_ADDRESS_TYPES = new Set(["city", "town", "village", "municipality", "hamlet"]);
+const GRANULAR_ADDRESS_TYPES = new Set(["suburb", "borough", "neighbourhood", "quarter", "district", "city_block", "residential"]);
+
+interface OpenMeteoGeocodeResult {
+  id: number;
+  name: string;
+  latitude: number;
+  longitude: number;
+  country?: string;
+  admin1?: string;
+  admin2?: string;
+  feature_code?: string;
+  population?: number;
+}
+
+interface OpenMeteoGeocodeResponse {
+  results?: OpenMeteoGeocodeResult[];
 }
 
 function text(value: unknown) {
@@ -74,29 +99,144 @@ function parsePopulation(value?: string) {
   return Number.isFinite(population) && population > 0 ? Math.round(population) : undefined;
 }
 
+function parseElevation(payload: ElevationResult | null) {
+  const value = payload?.elevation?.[0];
+  return Number.isFinite(value) ? Math.round(value) : undefined;
+}
+
+function normalizeKey(value?: string) {
+  return value?.trim().toLowerCase();
+}
+
+function toRadians(value: number) {
+  return (value * Math.PI) / 180;
+}
+
+function distanceKm(latitudeA: number, longitudeA: number, latitudeB: number, longitudeB: number) {
+  const earthRadiusKm = 6371;
+  const latDelta = toRadians(latitudeB - latitudeA);
+  const lonDelta = toRadians(longitudeB - longitudeA);
+  const startLat = toRadians(latitudeA);
+  const endLat = toRadians(latitudeB);
+  const a = Math.sin(latDelta / 2) ** 2 + Math.cos(startLat) * Math.cos(endLat) * Math.sin(lonDelta / 2) ** 2;
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function isSettlementFeature(featureCode?: string) {
+  return typeof featureCode === "string" && /^PPL/.test(featureCode);
+}
+
+async function resolveSettlementPopulation({
+  latitude,
+  longitude,
+  locality,
+  nearestCity,
+  region,
+  country,
+  locationHint,
+}: {
+  latitude: number;
+  longitude: number;
+  locality?: string;
+  nearestCity?: string;
+  region?: string;
+  country?: string;
+  locationHint?: string;
+}) {
+  const candidateNames = [locationHint, locality, nearestCity].filter((value, index, values): value is string => Boolean(text(value)) && values.findIndex((item) => normalizeKey(item) === normalizeKey(value)) === index);
+  const qualifiers = [country, region].filter((value, index, values): value is string => Boolean(text(value)) && values.findIndex((item) => normalizeKey(item) === normalizeKey(value)) === index);
+
+  for (const candidateName of candidateNames) {
+    const queries = [
+      [candidateName, qualifiers[0]].filter(Boolean).join(", "),
+      [candidateName, qualifiers[1]].filter(Boolean).join(", "),
+      candidateName,
+    ].filter((value, index, values) => Boolean(value) && values.indexOf(value) === index);
+
+    for (const query of queries) {
+      const url = new URL(OPEN_METEO_GEOCODING_URL);
+      url.searchParams.set("name", query);
+      url.searchParams.set("count", "10");
+      url.searchParams.set("language", "en");
+      url.searchParams.set("format", "json");
+
+      const response = await fetch(url, {
+        next: { revalidate: 86400 },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) continue;
+
+      const payload = await response.json() as OpenMeteoGeocodeResponse;
+      const match = payload.results
+        ?.filter((result) => isSettlementFeature(result.feature_code) && typeof result.population === "number" && result.population > 0)
+        .map((result) => ({
+          ...result,
+          score: distanceKm(latitude, longitude, result.latitude, result.longitude),
+          exactNameMatch: normalizeKey(result.name) === normalizeKey(candidateName),
+          countryMatch: !country || normalizeKey(result.country) === normalizeKey(country),
+          regionMatch: !region || normalizeKey(result.admin1) === normalizeKey(region) || normalizeKey(result.admin2) === normalizeKey(region),
+        }))
+        .filter((result) => result.countryMatch && (result.regionMatch || result.score < 75))
+        .sort((left, right) => {
+          if (left.exactNameMatch !== right.exactNameMatch) return left.exactNameMatch ? -1 : 1;
+          return left.score - right.score;
+        })[0];
+
+      if (match && (match.exactNameMatch || match.score < 50)) {
+        return {
+          population: Math.round(match.population ?? 0),
+          populationScope: match.name,
+          locality: match.name,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
 function normalizeLocation(
+  latitude: number,
+  longitude: number,
   nominatim: NominatimReverseResult | null,
   cloud: BigDataCloudResult | null,
+  elevationMeters?: number,
+  locationHint?: string,
+  settlementPopulation?: { population: number; populationScope: string; locality: string } | null,
 ): ReverseGeocodeResponse {
   const address = nominatim?.address ?? {};
-  const locality = firstText([
+  const addressType = firstText([nominatim?.addresstype, nominatim?.type, nominatim?.category]);
+  const resolvedLocality = firstText([
     address.city, address.town, address.village, address.municipality,
     address.hamlet, address.suburb, cloud?.locality,
   ]);
+  const locality = settlementPopulation?.locality ?? resolvedLocality;
   const hasSettlement = Boolean(firstText([
     address.city, address.town, address.village, address.municipality, address.hamlet,
   ]));
   const nearestCity = firstText([address.city, address.town, hasSettlement ? cloud?.city : undefined]);
+  const county = firstText([address.county, address.state_district]);
   const region = firstText([
     address.state, address.province, address.region, address.state_district,
     address.county, cloud?.principalSubdivision,
   ]);
   const country = firstText([address.country, cloud?.countryName]);
+  const continent = text(address.continent);
   const bodyOfWater = findBodyOfWater(nominatim, cloud);
   const geographicFeature = findGeographicFeature(cloud, bodyOfWater);
-  const population = parsePopulation(nominatim?.extratags?.population);
+  const hintedName = text(locationHint);
+  const hintMatchesLocality = normalizeKey(hintedName) === normalizeKey(locality) || normalizeKey(hintedName) === normalizeKey(nearestCity);
+  const populationCandidate = parsePopulation(nominatim?.extratags?.population);
+  const populationAllowed = Boolean(populationCandidate) && (
+    (addressType ? SETTLEMENT_ADDRESS_TYPES.has(addressType) : false) ||
+    (!addressType && normalizeKey(nominatim?.name) === normalizeKey(locality))
+  );
+  const featurePopulation = populationAllowed ? populationCandidate : undefined;
+  const population = settlementPopulation?.population ?? featurePopulation;
   const populationYear = text(nominatim?.extratags?.["population:date"]);
+  const preferHintedSettlement = hintMatchesLocality && addressType && GRANULAR_ADDRESS_TYPES.has(addressType);
   const primaryName = firstText([
+    preferHintedSettlement ? hintedName : undefined,
     nominatim?.name, locality, bodyOfWater, geographicFeature, region, country,
   ]) ?? "Remote coordinate";
   const isRemote = Boolean(bodyOfWater) || !hasSettlement;
@@ -110,14 +250,19 @@ function normalizeLocation(
   const details: LocationDetails = {
     primaryName,
     locality,
+    county,
     region,
     country,
+    continent,
     nearestCity,
     bodyOfWater,
     geographicFeature,
     population,
     populationYear,
-    populationScope: population ? primaryName : undefined,
+    populationScope: population ? (settlementPopulation?.populationScope ?? primaryName) : undefined,
+    populationSource: population ? (settlementPopulation ? "settlement" : "feature") : undefined,
+    elevationMeters,
+    addressType,
     isRemote,
     contextLabel,
     attribution: "OpenStreetMap contributors · BigDataCloud",
@@ -129,6 +274,7 @@ function normalizeLocation(
 export async function GET(request: NextRequest) {
   const latitude = Number(request.nextUrl.searchParams.get("lat"));
   const longitude = Number(request.nextUrl.searchParams.get("lon"));
+  const locationHint = text(request.nextUrl.searchParams.get("hint"));
   if (
     !Number.isFinite(latitude) || !Number.isFinite(longitude) ||
     latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180
@@ -150,8 +296,12 @@ export async function GET(request: NextRequest) {
   cloudUrl.searchParams.set("longitude", longitude.toFixed(5));
   cloudUrl.searchParams.set("localityLanguage", "en");
 
+  const elevationUrl = new URL(OPEN_METEO_ELEVATION_URL);
+  elevationUrl.searchParams.set("latitude", latitude.toFixed(5));
+  elevationUrl.searchParams.set("longitude", longitude.toFixed(5));
+
   try {
-    const [nominatimResult, cloudResult] = await Promise.allSettled([
+    const [nominatimResult, cloudResult, elevationResult] = await Promise.allSettled([
       fetch(nominatimUrl, {
         headers: {
           "User-Agent": "YTS-Orbital/0.1 (York Tech Services R&D; https://yorktechservices.com)",
@@ -164,6 +314,10 @@ export async function GET(request: NextRequest) {
         next: { revalidate: 86400 },
         signal: AbortSignal.timeout(8000),
       }),
+      fetch(elevationUrl, {
+        next: { revalidate: 86400 },
+        signal: AbortSignal.timeout(8000),
+      }),
     ]);
 
     const nominatim = nominatimResult.status === "fulfilled" && nominatimResult.value.ok
@@ -172,11 +326,35 @@ export async function GET(request: NextRequest) {
     const cloud = cloudResult.status === "fulfilled" && cloudResult.value.ok
       ? await cloudResult.value.json() as BigDataCloudResult
       : null;
+    const elevation = elevationResult.status === "fulfilled" && elevationResult.value.ok
+      ? await elevationResult.value.json() as ElevationResult
+      : null;
     const validNominatim = nominatim && !nominatim.error ? nominatim : null;
+    const reverseAddress = validNominatim?.address ?? {};
+    const reverseLocality = firstText([
+      reverseAddress.city, reverseAddress.town, reverseAddress.village, reverseAddress.municipality,
+      reverseAddress.hamlet, reverseAddress.suburb, cloud?.locality,
+    ]);
+    const reverseNearestCity = firstText([reverseAddress.city, reverseAddress.town, cloud?.city]);
+    const reverseRegion = firstText([
+      reverseAddress.state, reverseAddress.province, reverseAddress.region, reverseAddress.state_district,
+      reverseAddress.county, cloud?.principalSubdivision,
+    ]);
+    const reverseCountry = firstText([reverseAddress.country, cloud?.countryName]);
 
     if (!validNominatim && !cloud) throw new Error("All reverse geocoding providers failed");
 
-    return NextResponse.json(normalizeLocation(validNominatim, cloud), {
+    const settlementPopulation = await resolveSettlementPopulation({
+      latitude,
+      longitude,
+      locality: reverseLocality,
+      nearestCity: reverseNearestCity,
+      region: reverseRegion,
+      country: reverseCountry,
+      locationHint,
+    }).catch(() => null);
+
+    return NextResponse.json(normalizeLocation(latitude, longitude, validNominatim, cloud, parseElevation(elevation), locationHint, settlementPopulation), {
       headers: { "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=604800" },
     });
   } catch (error) {

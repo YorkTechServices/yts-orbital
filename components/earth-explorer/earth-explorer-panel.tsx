@@ -5,6 +5,40 @@ import { Crosshair, Globe2, LoaderCircle, MapPin, Radar, Search, Trash2 } from "
 import type { EarthViewMode, GeocodeResponse, GeocodeResult, SelectedEarthLocation } from "@/types/orbital";
 import { formatCoordinate } from "@/lib/utils/format";
 
+function LocationDetailsCard({ selectedLocation, onSetObserver, onClear }: {
+  selectedLocation: SelectedEarthLocation;
+  onSetObserver: () => void;
+  onClear: () => void;
+}) {
+  const details = selectedLocation.details;
+  const placeLine = [details?.locality, details?.region, details?.country].filter(Boolean).join(" · ");
+  const areaLine = [details?.county, details?.region, details?.country, details?.continent].filter(Boolean).join(" · ");
+
+  return (
+    <div className="selected-location selected-location--active">
+      <p className="eyebrow">SELECTED {selectedLocation.source === "globe" ? "COORDINATE" : "LOCATION"}</p>
+      <h3>{details?.primaryName ?? selectedLocation.displayName ?? "Globe selection"}</h3>
+      <div className="location-coordinates"><span>{formatCoordinate(selectedLocation.latitude, "N", "S")}</span><span>{formatCoordinate(selectedLocation.longitude, "E", "W")}</span></div>
+      {selectedLocation.lookupStatus === "loading" && <p className="location-lookup-status"><LoaderCircle className="spin" size={11} /> RESOLVING GEOGRAPHIC CONTEXT...</p>}
+      {selectedLocation.lookupStatus === "unavailable" && <p className="location-lookup-status unavailable">GEOGRAPHIC CONTEXT UNAVAILABLE</p>}
+      {details && <div className="location-intelligence">
+        <div><span>PLACE NAME</span><strong>{details.primaryName}</strong></div>
+        <div><span>PLACE / REGION</span><strong>{placeLine || "No named land area"}</strong></div>
+        <div><span>LATITUDE / LONGITUDE</span><strong>{formatCoordinate(selectedLocation.latitude, "N", "S")} · {formatCoordinate(selectedLocation.longitude, "E", "W")}</strong></div>
+        <div><span>COUNTRY / STATE / REGION</span><strong>{areaLine || "No administrative area resolved"}</strong></div>
+        <div><span>{details.populationSource === "settlement" ? "CITY POPULATION" : "POPULATION"}{details.populationScope ? ` · ${details.populationScope.toUpperCase()}` : ""}</span><strong>{details.population ? `~${details.population.toLocaleString()}${details.populationYear ? ` (${details.populationYear})` : ""}` : "No sourced estimate"}</strong></div>
+        <div><span>ELEVATION</span><strong>{typeof details.elevationMeters === "number" ? `${details.elevationMeters.toLocaleString()} m` : "Not available"}</strong></div>
+        <div><span>CITY / MUNICIPALITY CONTEXT</span><strong>{details.nearestCity ?? (details.isRemote ? "None identified · remote" : "Not identified")}</strong></div>
+        {(details.bodyOfWater || details.geographicFeature) && <div><span>GEOGRAPHIC FEATURE</span><strong>{details.bodyOfWater ?? details.geographicFeature}</strong></div>}
+        {details.addressType && <div><span>GEOGRAPHIC METADATA</span><strong>{details.addressType}</strong></div>}
+        <div className={details.isRemote ? "remote" : "populated"}><span>AREA CLASSIFICATION</span><strong>{details.contextLabel}</strong></div>
+      </div>}
+      <p className="selection-source">SOURCE · {selectedLocation.source === "search" ? "LOCATION SEARCH" : "GLOBE SELECTION"}</p>
+      <div className="explorer-actions"><button type="button" className="set-observer" onClick={onSetObserver}><MapPin size={13} /> SET AS OBSERVER</button><button type="button" onClick={onClear} aria-label="Clear selected Earth location"><Trash2 size={13} /> CLEAR</button></div>
+    </div>
+  );
+}
+
 interface EarthExplorerPanelProps {
   mode: EarthViewMode;
   selectedLocation: SelectedEarthLocation | null;
@@ -68,6 +102,8 @@ export default function EarthExplorerPanel({
     onClear();
   };
 
+  const locationIsPrimary = Boolean(selectedLocation) && mode !== "satellite";
+
   return (
     <section className="panel earth-explorer-panel">
       <div className="panel-heading">
@@ -75,10 +111,13 @@ export default function EarthExplorerPanel({
         <Crosshair size={18} />
       </div>
 
+      {locationIsPrimary && selectedLocation && <LocationDetailsCard selectedLocation={selectedLocation} onSetObserver={onSetObserver} onClear={clear} />}
+
       <div className="view-mode-control" aria-label="Earth view mode">
         {MODES.map(({ value, label, icon: Icon }) => (
           <button
             key={value}
+            type="button"
             className={mode === value ? "active" : ""}
             onClick={() => onModeChange(value)}
             disabled={(value === "location" && !selectedLocation) || (value === "satellite" && !satelliteAvailable)}
@@ -95,30 +134,17 @@ export default function EarthExplorerPanel({
       {searching && <p className="explorer-status">SEARCHING EARTH...</p>}
       {searchError && <p className="explorer-error">{searchError}</p>}
       {results.length > 0 && <div className="location-results">{results.map((result) => (
-        <button key={result.id} onClick={() => chooseResult(result)}>
+        <button key={result.id} type="button" onClick={() => chooseResult(result)}>
           <span><strong>{result.primaryName}</strong><small>{result.secondaryName}</small></span>
           <b>{result.latitude.toFixed(3)}, {result.longitude.toFixed(3)}</b>
         </button>
       ))}</div>}
 
-      <div className="selected-location">
-        {selectedLocation ? <>
-          <p className="eyebrow">SELECTED {selectedLocation.source === "globe" ? "COORDINATE" : "LOCATION"}</p>
-          <h3>{selectedLocation.details?.primaryName ?? selectedLocation.displayName ?? "Globe selection"}</h3>
-          <div className="location-coordinates"><span>{formatCoordinate(selectedLocation.latitude, "N", "S")}</span><span>{formatCoordinate(selectedLocation.longitude, "E", "W")}</span></div>
-          {selectedLocation.lookupStatus === "loading" && <p className="location-lookup-status"><LoaderCircle className="spin" size={11} /> RESOLVING GEOGRAPHIC CONTEXT...</p>}
-          {selectedLocation.lookupStatus === "unavailable" && <p className="location-lookup-status unavailable">GEOGRAPHIC CONTEXT UNAVAILABLE</p>}
-          {selectedLocation.details && <div className="location-intelligence">
-            <div><span>PLACE</span><strong>{[selectedLocation.details.locality, selectedLocation.details.region, selectedLocation.details.country].filter(Boolean).join(" · ") || "No named land area"}</strong></div>
-            <div><span>POPULATION{selectedLocation.details.populationScope ? ` · ${selectedLocation.details.populationScope.toUpperCase()}` : ""}</span><strong>{selectedLocation.details.population ? `~${selectedLocation.details.population.toLocaleString()}${selectedLocation.details.populationYear ? ` (${selectedLocation.details.populationYear})` : ""}` : "No sourced estimate"}</strong></div>
-            <div><span>CITY / MUNICIPALITY CONTEXT</span><strong>{selectedLocation.details.nearestCity ?? (selectedLocation.details.isRemote ? "None identified · remote" : "Not identified")}</strong></div>
-            {(selectedLocation.details.bodyOfWater || selectedLocation.details.geographicFeature) && <div><span>GEOGRAPHIC FEATURE</span><strong>{selectedLocation.details.bodyOfWater ?? selectedLocation.details.geographicFeature}</strong></div>}
-            <div className={selectedLocation.details.isRemote ? "remote" : "populated"}><span>AREA CLASSIFICATION</span><strong>{selectedLocation.details.contextLabel}</strong></div>
-          </div>}
-          <p className="selection-source">SOURCE · {selectedLocation.source === "search" ? "LOCATION SEARCH" : "GLOBE SELECTION"}</p>
-          <div className="explorer-actions"><button className="set-observer" onClick={onSetObserver}><MapPin size={13} /> SET AS OBSERVER</button><button onClick={clear} aria-label="Clear selected Earth location"><Trash2 size={13} /> CLEAR</button></div>
-        </> : <div className="explorer-empty"><Globe2 size={20} /><p>Click the globe or search for a location.</p></div>}
-      </div>
+      {!locationIsPrimary && <div className="selected-location">
+        {selectedLocation
+          ? <LocationDetailsCard selectedLocation={selectedLocation} onSetObserver={onSetObserver} onClear={clear} />
+          : <div className="explorer-empty"><Globe2 size={20} /><p>Click the globe or search for a location.</p></div>}
+      </div>}
 
       <div className="scale-readout"><span>VIEW SCALE</span><strong>{scaleLabel}</strong></div>
       <div className="geocode-attribution">Location data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a> · context by <a href="https://www.bigdatacloud.com/" target="_blank" rel="noreferrer">BigDataCloud</a></div>

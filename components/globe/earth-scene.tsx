@@ -266,12 +266,31 @@ function GroundMarker({ latitude, longitude, color }: {
   longitude: number;
   color: string;
 }) {
-  const position = latLonToScenePosition(latitude, longitude, 2.04);
+  const markerRef = useRef<THREE.Group>(null);
+  const position = useMemo(
+    () => new THREE.Vector3(...latLonToScenePosition(latitude, longitude, 2.025)),
+    [latitude, longitude],
+  );
+  const quaternion = useMemo(
+    () => new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), position.clone().normalize()),
+    [position],
+  );
+
+  useFrame(({ camera }) => {
+    if (!markerRef.current) return;
+    const scale = THREE.MathUtils.clamp((camera.position.length() - 2.4) / 3.2, 0.42, 1);
+    markerRef.current.scale.setScalar(scale);
+  });
+
   return (
-    <group position={position}>
+    <group ref={markerRef} position={position} quaternion={quaternion}>
       <mesh>
-        <sphereGeometry args={[0.027, 12, 12]} />
-        <meshBasicMaterial color={color} />
+        <circleGeometry args={[0.022, 18]} />
+        <meshBasicMaterial color={color} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh>
+        <ringGeometry args={[0.035, 0.043, 24]} />
+        <meshBasicMaterial color={color} transparent opacity={0.72} side={THREE.DoubleSide} />
       </mesh>
     </group>
   );
@@ -283,6 +302,7 @@ function CityMarker({ city, onLocationSelect }: {
 }) {
   const labelRef = useRef<HTMLSpanElement>(null);
   const labelVisible = useRef(false);
+  const markerRef = useRef<THREE.Group>(null);
   const position = useMemo(
     () => new THREE.Vector3(...latLonToScenePosition(city.latitude, city.longitude, 2.025)),
     [city.latitude, city.longitude],
@@ -294,6 +314,11 @@ function CityMarker({ city, onLocationSelect }: {
   );
 
   useFrame(({ camera }) => {
+    const cameraDistance = camera.position.length();
+    if (markerRef.current) {
+      const scale = THREE.MathUtils.clamp((cameraDistance - 2.4) / 3.2, 0.42, 1);
+      markerRef.current.scale.setScalar(scale);
+    }
     const facing = position.dot(camera.position) / (position.length() * camera.position.length());
     const labelEligible = city.priority || camera.position.length() < 4.65;
     const visible = labelEligible && facing > (labelVisible.current ? 0.04 : 0.16);
@@ -311,12 +336,13 @@ function CityMarker({ city, onLocationSelect }: {
       latitude: city.latitude,
       longitude: city.longitude,
       displayName: city.name,
+      labelHint: city.name,
       source: "globe",
     });
   };
 
   return (
-    <group position={position} quaternion={quaternion} onClick={selectCity}>
+    <group ref={markerRef} position={position} quaternion={quaternion} onClick={selectCity}>
       <mesh>
         <circleGeometry args={[0.022, 18]} />
         <meshBasicMaterial color="#7ee5df" side={THREE.DoubleSide} />
@@ -340,7 +366,7 @@ function SpacecraftMarker({ position }: { position: [number, number, number] }) 
   const halo = useRef<THREE.Mesh>(null);
   useFrame(({ clock }) => {
     if (!halo.current) return;
-    const scale = 1 + Math.sin(clock.elapsedTime * 3) * 0.18;
+    const scale = 1 + Math.sin(clock.elapsedTime * 3) * 0.1;
     halo.current.scale.setScalar(scale);
   });
   return (
@@ -350,10 +376,10 @@ function SpacecraftMarker({ position }: { position: [number, number, number] }) 
         <meshBasicMaterial color="#e8fdff" />
       </mesh>
       <mesh ref={halo}>
-        <sphereGeometry args={[0.12, 20, 20]} />
-        <meshBasicMaterial color="#5de8e8" transparent opacity={0.19} depthWrite={false} />
+        <sphereGeometry args={[0.09, 18, 18]} />
+        <meshBasicMaterial color="#5de8e8" transparent opacity={0.12} depthWrite={false} />
       </mesh>
-      <pointLight color="#67ffff" intensity={2.2} distance={1.4} />
+      <pointLight color="#67ffff" intensity={1.2} distance={0.9} />
     </group>
   );
 }
@@ -469,7 +495,7 @@ function CameraController({ mode, selectedLocation, state, onScaleChange }: {
     transitioning.current = false;
   };
 
-  return <OrbitControls ref={controls} enablePan={false} enableRotate={mode !== "satellite"} enableZoom={mode !== "satellite"} enableDamping={false} minDistance={2.4} maxDistance={10} zoomSpeed={0.72} autoRotate={false} onStart={takeManualControl} />;
+  return <OrbitControls ref={controls} enablePan={false} enableRotate={mode !== "satellite"} enableZoom={mode !== "satellite"} enableDamping minDistance={2.4} maxDistance={10} zoomSpeed={0.3} autoRotate={false} onStart={takeManualControl} />;
 }
 
 function ClickableEarth({ onLocationSelect }: { onLocationSelect: EarthSceneProps["onLocationSelect"] }) {
