@@ -44,8 +44,8 @@ const GRANULAR_ADDRESS_TYPES = new Set(["suburb", "borough", "neighbourhood", "q
 interface OpenMeteoGeocodeResult {
   id: number;
   name: string;
-  latitude: number;
-  longitude: number;
+  latitude?: number;
+  longitude?: number;
   country?: string;
   admin1?: string;
   admin2?: string;
@@ -101,7 +101,7 @@ function parsePopulation(value?: string) {
 
 function parseElevation(payload: ElevationResult | null) {
   const value = payload?.elevation?.[0];
-  return Number.isFinite(value) ? Math.round(value) : undefined;
+  return typeof value === "number" && Number.isFinite(value) ? Math.round(value) : undefined;
 }
 
 function normalizeKey(value?: string) {
@@ -124,6 +124,23 @@ function distanceKm(latitudeA: number, longitudeA: number, latitudeB: number, lo
 
 function isSettlementFeature(featureCode?: string) {
   return typeof featureCode === "string" && /^PPL/.test(featureCode);
+}
+
+function hasSettlementCoordinates(result: OpenMeteoGeocodeResult): result is OpenMeteoGeocodeResult & {
+  latitude: number;
+  longitude: number;
+  population: number;
+} {
+  return typeof result.latitude === "number" && typeof result.longitude === "number" && typeof result.population === "number";
+}
+
+function isUsableSettlementResult(result: OpenMeteoGeocodeResult): result is OpenMeteoGeocodeResult & {
+  latitude: number;
+  longitude: number;
+  population: number;
+  feature_code: string;
+} {
+  return isSettlementFeature(result.feature_code) && hasSettlementCoordinates(result) && result.population > 0;
 }
 
 async function resolveSettlementPopulation({
@@ -168,23 +185,29 @@ async function resolveSettlementPopulation({
 
       const payload = await response.json() as OpenMeteoGeocodeResponse;
       const match = payload.results
-        ?.filter((result) => isSettlementFeature(result.feature_code) && typeof result.population === "number" && result.population > 0)
-        .map((result) => ({
-          ...result,
-          score: distanceKm(latitude, longitude, result.latitude, result.longitude),
-          exactNameMatch: normalizeKey(result.name) === normalizeKey(candidateName),
-          countryMatch: !country || normalizeKey(result.country) === normalizeKey(country),
-          regionMatch: !region || normalizeKey(result.admin1) === normalizeKey(region) || normalizeKey(result.admin2) === normalizeKey(region),
-        }))
+        ?.filter(isUsableSettlementResult)
+        .map((result) => {
+          const resultLatitude = result.latitude;
+          const resultLongitude = result.longitude;
+          const resultPopulation = result.population;
+          return {
+            name: result.name,
+            population: resultPopulation,
+            score: distanceKm(latitude, longitude, resultLatitude, resultLongitude),
+            exactNameMatch: normalizeKey(result.name) === normalizeKey(candidateName),
+            countryMatch: !country || normalizeKey(result.country) === normalizeKey(country),
+            regionMatch: !region || normalizeKey(result.admin1) === normalizeKey(region) || normalizeKey(result.admin2) === normalizeKey(region),
+          };
+        })
         .filter((result) => result.countryMatch && (result.regionMatch || result.score < 75))
         .sort((left, right) => {
           if (left.exactNameMatch !== right.exactNameMatch) return left.exactNameMatch ? -1 : 1;
           return left.score - right.score;
         })[0];
 
-      if (match && (match.exactNameMatch || match.score < 50)) {
+      if (match && typeof match.population === "number" && (match.exactNameMatch || match.score < 50)) {
         return {
-          population: Math.round(match.population ?? 0),
+          population: Math.round(match.population),
           populationScope: match.name,
           locality: match.name,
         };
