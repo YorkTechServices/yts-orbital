@@ -16,7 +16,7 @@ The key word is **estimates**. The app does not talk to spacecraft. It uses a st
 - Move simulation time backward or forward and play it at `1x`, `60x`, or `300x`.
 - See a sampled orbit path around the selected simulation time.
 - Estimate geometric passes above an observer.
-- Explore Earth by clicking the globe, selecting one of 24 city pins, or searching for a place.
+- Explore Earth by clicking the globe, selecting one of 41 city pins, or searching for a place.
 - Continue using Earth Explorer if the satellite feed is unavailable.
 
 ## Main technologies

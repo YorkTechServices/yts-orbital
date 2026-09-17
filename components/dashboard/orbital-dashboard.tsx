@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertTriangle, Check, ChevronRight, CircleHelp, Crosshair,
   Database, Gauge, LocateFixed, Pause, Play, RotateCcw, Search, Satellite, X,
@@ -10,14 +10,19 @@ import type { SatRec } from "satellite.js";
 import type {
   CatalogResponse, EarthViewMode, ObserverLocation, OmmRecord, OrbitalCharacteristics,
   PredictedPass, PropagatedState, ReverseGeocodeResponse, SatelliteCatalogEntry, SelectedEarthLocation,
+  SelectedEntity,
 } from "@/types/orbital";
+import {
+  createInitialMapLayerState, updateMapLayerState,
+  type MapLayerId, type MapLayerLoadState, type MapLayerStateById,
+} from "@/lib/layers/map-layers";
 import {
   calculatePasses, createSatRecFromOmm, generateOrbitPath,
   getOrbitalCharacteristics, propagateSatellite,
 } from "@/lib/orbital/engine";
 import { formatCoordinate, formatDuration, formatSimulationDelta, formatUtc } from "@/lib/utils/format";
 import BrandGlobe from "@/components/dashboard/brand-globe";
-import EarthExplorerPanel from "@/components/earth-explorer/earth-explorer-panel";
+import EarthExplorerPanel, { LocationDetailsCard } from "@/components/earth-explorer/earth-explorer-panel";
 import GlossaryTerm from "@/components/ui/glossary-term";
 
 const EarthScene = dynamic(() => import("@/components/globe/earth-scene"), {
@@ -31,6 +36,18 @@ const DEFAULT_OBSERVER: ObserverLocation = {
   longitude: -76.7277,
   altitudeKm: 0.1,
 };
+
+function isObserverLocation(value: unknown): value is ObserverLocation {
+  if (!value || typeof value !== "object") return false;
+  const observer = value as Partial<ObserverLocation>;
+  return typeof observer.label === "string" &&
+    observer.label.length <= 120 &&
+    typeof observer.latitude === "number" && Number.isFinite(observer.latitude) &&
+    observer.latitude >= -90 && observer.latitude <= 90 &&
+    typeof observer.longitude === "number" && Number.isFinite(observer.longitude) &&
+    observer.longitude >= -180 && observer.longitude <= 180 &&
+    typeof observer.altitudeKm === "number" && Number.isFinite(observer.altitudeKm);
+}
 
 type MobileInfoTab = "location" | "satellites" | "layers";
 
@@ -65,7 +82,9 @@ function LoadingScreen({ ready = false, onStart }: { ready?: boolean; onStart?: 
   ] as const;
 
   const totalSequenceMs = 4200;
-  const progress = Math.min(100, Math.round((elapsedMs / totalSequenceMs) * 100));
+  const sequenceProgress = Math.min(100, Math.round((elapsedMs / totalSequenceMs) * 100));
+  const progress = ready ? sequenceProgress : Math.min(94, sequenceProgress);
+  const waitingForCatalog = !ready && elapsedMs >= totalSequenceMs;
   const sequenceStep = elapsedMs >= 320 ? 1 : 0;
   const typedSteps = startupSteps.map((step) => {
     if (elapsedMs < step.startMs) {
@@ -75,7 +94,7 @@ function LoadingScreen({ ready = false, onStart }: { ready?: boolean; onStart?: 
     const typedRatio = Math.min(1, (elapsedMs - step.startMs) / step.durationMs);
     return Math.min(step.text.length, Math.ceil(typedRatio * step.text.length));
   });
-  const sequenceComplete = typedSteps.every((typedLength, index) => typedLength >= startupSteps[index].text.length) && progress >= 100;
+  const sequenceComplete = typedSteps.every((typedLength, index) => typedLength >= startupSteps[index].text.length) && sequenceProgress >= 100;
   const viewerReady = ready && sequenceComplete;
 
   useEffect(() => {
@@ -116,18 +135,29 @@ function LoadingScreen({ ready = false, onStart }: { ready?: boolean; onStart?: 
           );
         })}
       </div>
+      <div
+        className={`startup-progress ${waitingForCatalog ? "is-waiting" : ""}`}
+        role="progressbar"
+        aria-label="Orbital startup progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress}
+        aria-valuetext={waitingForCatalog ? `Waiting for orbital catalog, ${progress}% complete` : `${progress}% complete`}
+      >
+        <div><span>{waitingForCatalog ? "WAITING FOR ORBITAL CATALOG" : ready && progress === 100 ? "SYSTEM READY" : "SYSTEM LOAD"}</span><strong>{progress}%</strong></div>
+        <span className="startup-progress__track" aria-hidden="true"><b style={{ width: `${progress}%` }} /></span>
+      </div>
       {ready && <>
         <p className={`loading-copy startup-reveal ${elapsedMs >= 3320 ? "is-visible" : ""}`}>The catalog is loaded. Start the viewer when you are ready.</p>
         <button className={`loading-start-button ${viewerReady ? "is-ready" : ""}`} onClick={onStart} aria-label="Start viewer" disabled={!viewerReady}>
           <span className="loading-start-button__prompt" aria-hidden="true">
             <span>MISSION CONTROL</span>
-            <span className="loading-start-button__status">{viewerReady ? "LAUNCH AUTHORIZATION READY" : `SYSTEM LOAD ${progress}%`}</span>
+            <span className="loading-start-button__status">{viewerReady ? "LAUNCH AUTHORIZATION READY" : "FINALIZING SYSTEMS"}</span>
           </span>
           <span className="loading-start-button__core">
             <span className="loading-start-button__label">ENTER VIEWER</span>
             <ChevronRight size={16} />
           </span>
-          <span className="loading-start-button__bar" aria-hidden="true"><b style={{ width: `${progress}%` }} /></span>
         </button>
       </>}
     </main>
@@ -186,17 +216,6 @@ function GuideDrawer({ onClose }: { onClose: () => void }) {
 
         <div className="guide-actions"><a className="primary-button" href="https://celestrak.org" target="_blank" rel="noreferrer">CelesTrak data source <ChevronRight size={15} /></a><a href="https://yorktechservices.com" target="_blank" rel="noreferrer">York Tech Services <ChevronRight size={14} /></a></div>
       </aside>
-    </div>
-  );
-}
-
-function GlobeSelectionSummary({ location }: { location: SelectedEarthLocation | null }) {
-  if (!location) return null;
-  return (
-    <div className="globe-selection-summary" title={location.displayName}>
-      <Crosshair size={15} />
-      <div><span>EARTH EXPLORER · {location.lookupStatus === "loading" ? "IDENTIFYING LOCATION" : location.details?.contextLabel ?? (location.source === "search" ? "SEARCH RESULT" : "GLOBE SELECTION")}</span><strong>{location.details?.primaryName ?? location.displayName ?? "Selected coordinate"}{location.details?.region ? ` · ${location.details.region}` : ""}{location.details?.country ? ` · ${location.details.country}` : ""}</strong></div>
-      <b>{formatCoordinate(location.latitude, "N", "S")} · {formatCoordinate(location.longitude, "E", "W")}</b>
     </div>
   );
 }
@@ -269,7 +288,7 @@ function MethodologyPanel({ onOpenGuide }: { onOpenGuide: () => void }) {
 
 function EarthOnlyScreen({
   message, retry, clock, observer, selectedLocation, mode, scaleLabel,
-  showBanner, onDismissBanner, onModeChange, onLocationSelect, onClear, onSetObserver, onScaleChange,
+  showBanner, mapLayers, onDismissBanner, onModeChange, onLocationSelect, onClear, onSetObserver, onToggleMapLayer, onLayerLoadStateChange, onScaleChange,
 }: {
   message: string;
   retry: () => void;
@@ -279,11 +298,14 @@ function EarthOnlyScreen({
   mode: EarthViewMode;
   scaleLabel: string;
   showBanner: boolean;
+  mapLayers: MapLayerStateById;
   onDismissBanner: () => void;
   onModeChange: (mode: EarthViewMode) => void;
   onLocationSelect: (location: SelectedEarthLocation) => void;
   onClear: () => void;
   onSetObserver: () => void;
+  onToggleMapLayer: (id: MapLayerId) => void;
+  onLayerLoadStateChange: (id: MapLayerId, loadState: MapLayerLoadState, error?: string) => void;
   onScaleChange: (scale: string) => void;
 }) {
   const [guideOpen, setGuideOpen] = useState(false);
@@ -310,22 +332,24 @@ function EarthOnlyScreen({
             onLocationSelect={onLocationSelect}
             onClear={onClear}
             onSetObserver={onSetObserver}
+            mapLayers={mapLayers}
+            onToggleMapLayer={onToggleMapLayer}
+            showSelectedLocationDetails={false}
           />
         </aside>
         <section className="center-stage">
           <div className="globe-header">
-            <div><p className="eyebrow">GEOSPATIAL VISUALIZATION / EARTH FIXED</p><h2>EARTH EXPLORER</h2></div>
-            <GlobeSelectionSummary location={selectedLocation} />
-            <span className="solution-error"><i /> SATELLITE DATA OFFLINE</span>
+            <div className="globe-header-title"><div><p className="eyebrow">GEOSPATIAL VISUALIZATION / EARTH FIXED</p><h2>EARTH EXPLORER</h2></div><span className="solution-error"><i /> SATELLITE DATA OFFLINE</span></div>
+            {selectedLocation && <LocationDetailsCard selectedLocation={selectedLocation} onSetObserver={onSetObserver} onClear={onClear} placement="globe-header" />}
           </div>
           <div className="globe-wrap earth-only-globe">
-            <EarthScene state={null} orbitPath={[]} satelliteName="Earth Explorer" observer={observer} selectedLocation={selectedLocation} viewMode={mode} onLocationSelect={onLocationSelect} onScaleChange={onScaleChange} />
+            <EarthScene state={null} orbitPath={[]} satelliteName="Earth Explorer" observer={observer} selectedLocation={selectedLocation} mapLayers={mapLayers} viewMode={mode} onLocationSelect={onLocationSelect} onLayerLoadStateChange={onLayerLoadStateChange} onScaleChange={onScaleChange} />
             {selectedLocation && <button className="target-exit-button" onClick={onClear}><RotateCcw size={14} /> RETURN TO EARTH</button>}
           </div>
         </section>
       </main>
 
-      <footer><span>YTS Orbital v0.1</span><span>Earth Explorer operating independently</span><a href="https://yorktechservices.com" target="_blank" rel="noreferrer">York Tech Services</a><span>Satellite data temporarily unavailable</span></footer>
+      <footer><span>YTS Orbital v0.2</span><span>Earth Explorer operating independently</span><a href="https://yorktechservices.com" target="_blank" rel="noreferrer">York Tech Services</a><span>Satellite data temporarily unavailable</span></footer>
       {guideOpen && <GuideDrawer onClose={() => setGuideOpen(false)} />}
     </div>
   );
@@ -399,14 +423,48 @@ export default function OrbitalDashboard() {
   const [returnViewMode, setReturnViewMode] = useState<EarthViewMode>("satellite");
   const [earthScale, setEarthScale] = useState("GLOBAL VIEW");
   const [mobileInfoTab, setMobileInfoTab] = useState<MobileInfoTab>("satellites");
+  const [selectedEntity, setSelectedEntity] = useState<SelectedEntity>({ type: "none" });
+  const [mapLayers, setMapLayers] = useState(createInitialMapLayerState);
   const locationRequestId = useRef(0);
   const feedWasUnavailable = useRef(false);
+  const mobileInfoPanelRef = useRef<HTMLElement>(null);
+
+  const toggleMapLayer = useCallback((id: MapLayerId) => {
+    setMapLayers((current) => updateMapLayerState(current, id, {
+      visible: !current[id].visible,
+      error: undefined,
+    }));
+  }, []);
+
+  const updateMapLayerLoadState = useCallback((id: MapLayerId, loadState: MapLayerLoadState, layerError?: string) => {
+    setMapLayers((current) => updateMapLayerState(current, id, { loadState, error: layerError }));
+  }, []);
+
+  useEffect(() => {
+    if (selectedEntity.type === "location" && window.matchMedia("(max-width: 820px)").matches) {
+      const frame = window.requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>(".globe-header")?.scrollIntoView({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+          block: "start",
+        });
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
+    mobileInfoPanelRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    mobileInfoPanelRef.current?.querySelector(".mobile-info-pane.active")?.scrollTo({ top: 0, behavior: "auto" });
+  }, [selectedEntity]);
 
   useEffect(() => {
     const saved = localStorage.getItem("yts-orbital-observer");
     if (!saved) return;
     const frame = window.requestAnimationFrame(() => {
-      try { setObserverState(JSON.parse(saved) as ObserverLocation); } catch { localStorage.removeItem("yts-orbital-observer"); }
+      try {
+        const parsed: unknown = JSON.parse(saved);
+        if (isObserverLocation(parsed)) setObserverState(parsed);
+        else localStorage.removeItem("yts-orbital-observer");
+      } catch {
+        localStorage.removeItem("yts-orbital-observer");
+      }
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
@@ -469,6 +527,7 @@ export default function OrbitalDashboard() {
         const data = await response.json() as OmmRecord | { error: string };
         if (!response.ok || "error" in data) throw new Error("error" in data ? data.error : "Satellite request failed");
         setSelected(data);
+        setSelectedEntity((current) => current.type === "none" ? { type: "satellite", noradId: data.NORAD_CAT_ID } : current);
       })
       .catch((reason: Error) => {
         if (reason.name === "AbortError") return;
@@ -513,6 +572,7 @@ export default function OrbitalDashboard() {
     const requestId = ++locationRequestId.current;
     if (!selectedEarthLocation) setReturnViewMode(earthViewMode === "location" ? "satellite" : earthViewMode);
     setSelectedEarthLocation({ ...location, lookupStatus: "loading", details: undefined });
+    setSelectedEntity({ type: "location", latitude: location.latitude, longitude: location.longitude });
     setEarthViewMode("location");
     setMobileInfoTab("location");
     try {
@@ -536,6 +596,7 @@ export default function OrbitalDashboard() {
     locationRequestId.current += 1;
     setSelectedEarthLocation(null);
     setEarthViewMode(error ? "earth" : returnViewMode);
+    setSelectedEntity(selectedId && returnViewMode === "satellite" ? { type: "satellite", noradId: selectedId } : { type: "none" });
   };
   const setSelectedAsObserver = () => {
     if (!selectedEarthLocation) return;
@@ -556,11 +617,14 @@ export default function OrbitalDashboard() {
     mode={earthViewMode === "satellite" ? "earth" : earthViewMode}
     scaleLabel={earthScale}
     showBanner={!outageAcknowledged}
+    mapLayers={mapLayers}
     onDismissBanner={() => setOutageAcknowledged(true)}
     onModeChange={setEarthViewMode}
     onLocationSelect={selectEarthLocation}
     onClear={clearEarthLocation}
     onSetObserver={setSelectedAsObserver}
+    onToggleMapLayer={toggleMapLayer}
+    onLayerLoadStateChange={updateMapLayerLoadState}
     onScaleChange={setEarthScale}
   />;
   if (!catalogData || !selected || !characteristics) return <LoadingScreen />;
@@ -573,11 +637,14 @@ export default function OrbitalDashboard() {
     setSelectedId(entry.noradId);
     setQuery("");
     setEarthViewMode("satellite");
+    setSelectedEntity({ type: "satellite", noradId: entry.noradId });
     setMobileInfoTab("satellites");
   };
   const changeEarthViewMode = (mode: EarthViewMode) => {
     setEarthViewMode(mode);
     setMobileInfoTab(mode === "satellite" ? "satellites" : "location");
+    if (mode === "satellite" && selectedId) setSelectedEntity({ type: "satellite", noradId: selectedId });
+    if (mode === "location" && selectedEarthLocation) setSelectedEntity({ type: "location", latitude: selectedEarthLocation.latitude, longitude: selectedEarthLocation.longitude });
   };
   const jump = (hours: number) => { setSimulationTime((time) => new Date(time.getTime() + hours * 3_600_000)); setIsLive(false); setPlaybackSpeed(0); };
   const returnLive = () => { setSimulationTime(new Date()); setIsLive(true); setPlaybackSpeed(1); };
@@ -586,7 +653,7 @@ export default function OrbitalDashboard() {
     <div className="app-shell">
       <header className="topbar">
         <div className="brand-mark"><BrandGlobe /><div><strong>YTS ORBITAL</strong><span>Satellite Operations & Orbital Intelligence</span></div></div>
-        <div className="header-status"><span className="version">v0.1 R&D</span><span className="data-status"><i /> CELESTRAK GP · SGP4</span><span className="utc-clock">{formatUtc(clock)} <small>UTC</small></span><button className="icon-button" onClick={() => setAboutOpen(true)} aria-label="Open how-to and learning guide"><CircleHelp size={18} /></button></div>
+        <div className="header-status"><span className="version">v0.2 R&D</span><span className="data-status"><i /> CELESTRAK GP · SGP4</span><span className="utc-clock">{formatUtc(clock)} <small>UTC</small></span><button className="icon-button" onClick={() => setAboutOpen(true)} aria-label="Open how-to and learning guide"><CircleHelp size={18} /></button></div>
       </header>
 
       {feedRestoredNotice && <section className="degraded-banner restored" role="status">
@@ -613,6 +680,9 @@ export default function OrbitalDashboard() {
             onLocationSelect={selectEarthLocation}
             onClear={clearEarthLocation}
             onSetObserver={setSelectedAsObserver}
+            mapLayers={mapLayers}
+            onToggleMapLayer={toggleMapLayer}
+            showSelectedLocationDetails={false}
           />
           <FeaturedPanel featured={catalogData.featured} selectedId={selectedId} onSelectSatellite={selectSatellite} />
           <IdentityPanel selected={selected} />
@@ -620,26 +690,22 @@ export default function OrbitalDashboard() {
 
         <section className="center-stage">
           <div className="globe-header">
-            <div>
-              <p className="eyebrow">{isSatelliteView ? "ORBITAL VISUALIZATION / EARTH FIXED" : "GEOSPATIAL VISUALIZATION / EARTH FIXED"}</p>
-              <h2>{isSatelliteView ? selected.OBJECT_NAME : "EARTH EXPLORER"}</h2>
-            </div>
-            <GlobeSelectionSummary location={selectedEarthLocation} />
-            {isSatelliteView && <span className={state ? "solution-good" : "solution-error"}><i /> {state ? "SGP4 SOLUTION NOMINAL" : "PROPAGATION ERROR"}</span>}
+            <div className="globe-header-title"><div><p className="eyebrow">{isSatelliteView ? "ORBITAL VISUALIZATION / EARTH FIXED" : "GEOSPATIAL VISUALIZATION / EARTH FIXED"}</p><h2>{isSatelliteView ? selected.OBJECT_NAME : "EARTH EXPLORER"}</h2></div>{isSatelliteView && <span className={state ? "solution-good" : "solution-error"}><i /> {state ? "SGP4 SOLUTION NOMINAL" : "PROPAGATION ERROR"}</span>}</div>
+            {selectedEarthLocation && !isSatelliteView && <LocationDetailsCard selectedLocation={selectedEarthLocation} onSetObserver={setSelectedAsObserver} onClear={clearEarthLocation} placement="globe-header" />}
           </div>
-          <div className="globe-wrap"><EarthScene state={state} orbitPath={orbitPath} satelliteName={selected.OBJECT_NAME} observer={observer} selectedLocation={selectedEarthLocation} viewMode={earthViewMode} onLocationSelect={selectEarthLocation} onScaleChange={setEarthScale} />{selectedEarthLocation && <button className="target-exit-button" onClick={clearEarthLocation}><RotateCcw size={14} /> RETURN TO {returnViewMode === "satellite" ? "ORBIT" : "EARTH VIEW"}</button>}{isSatelliteView && state && <div className="position-tag"><span>ALTITUDE</span><strong>{state.altitudeKm.toFixed(1)} km</strong></div>}</div>
+          <div className="globe-wrap"><EarthScene state={state} orbitPath={orbitPath} satelliteName={selected.OBJECT_NAME} observer={observer} selectedLocation={selectedEarthLocation} mapLayers={mapLayers} viewMode={earthViewMode} onLocationSelect={selectEarthLocation} onSatelliteSelect={() => changeEarthViewMode("satellite")} onLayerLoadStateChange={updateMapLayerLoadState} onScaleChange={setEarthScale} />{selectedEarthLocation && <button className="target-exit-button" onClick={clearEarthLocation}><RotateCcw size={14} /> RETURN TO {returnViewMode === "satellite" ? "ORBIT" : "EARTH VIEW"}</button>}{isSatelliteView && state && <div className="position-tag"><span>ALTITUDE</span><strong>{state.altitudeKm.toFixed(1)} km</strong></div>}</div>
           <section className="time-machine">
             <div className="time-title"><div><p className="eyebrow">TIME MACHINE</p><h2>SIMULATION TIME</h2></div><div className="sim-readout"><span className={isLive ? "live" : "sim"}>{isLive ? "LIVE" : `SIMULATION ${formatSimulationDelta(deltaMs)}`}</span><strong>{simulationTime.toISOString().replace("T", " ").slice(0, 19)} UTC</strong></div></div>
             <div className="time-controls"><button onClick={() => jump(-1)}>−1 HR</button><button className={isLive ? "active" : ""} onClick={returnLive}><Crosshair size={14} /> NOW</button><button onClick={() => jump(1)}>+1 HR</button><div className="playback"><button aria-label="Pause simulation" className={!playbackSpeed ? "active" : ""} onClick={() => { setPlaybackSpeed(0); setIsLive(false); }}><Pause size={14} /></button>{[1, 60, 300].map((speed) => <button key={speed} className={!isLive && playbackSpeed === speed ? "active" : ""} onClick={() => { setPlaybackSpeed(speed); setIsLive(false); }}><Play size={11} />{speed}x</button>)}</div></div>
             <div className="slider-wrap"><span>−6h</span><input aria-label="Simulation time offset" type="range" min="-6" max="6" step="0.05" value={Math.max(-6, Math.min(6, deltaMs / 3_600_000))} onChange={(event) => { setSimulationTime(new Date(Date.now() + Number(event.target.value) * 3_600_000)); setIsLive(false); setPlaybackSpeed(0); }} /><span>+6h</span></div>
           </section>
-          <section className="panel mobile-info-panel" aria-label="Mobile information panel">
+          <section ref={mobileInfoPanelRef} className="panel mobile-info-panel" aria-label="Mobile information panel">
             <div className="mobile-info-tabs" role="tablist" aria-label="Mobile information sections">
               <button type="button" role="tab" className={mobileInfoTab === "location" ? "active" : ""} aria-selected={mobileInfoTab === "location"} onClick={() => setMobileInfoTab("location")}>LOCATION</button>
               <button type="button" role="tab" className={mobileInfoTab === "satellites" ? "active" : ""} aria-selected={mobileInfoTab === "satellites"} onClick={() => setMobileInfoTab("satellites")}>SATELLITES</button>
               <button type="button" role="tab" className={mobileInfoTab === "layers" ? "active" : ""} aria-selected={mobileInfoTab === "layers"} onClick={() => setMobileInfoTab("layers")}>LAYERS</button>
             </div>
-            <div className={mobileInfoTab === "location" ? "mobile-info-pane active" : "mobile-info-pane"}><EarthExplorerPanel mode={earthViewMode} selectedLocation={selectedEarthLocation} scaleLabel={earthScale} onModeChange={changeEarthViewMode} onLocationSelect={selectEarthLocation} onClear={clearEarthLocation} onSetObserver={setSelectedAsObserver} /></div>
+            <div className={mobileInfoTab === "location" ? "mobile-info-pane active" : "mobile-info-pane"}><EarthExplorerPanel mode={earthViewMode} selectedLocation={selectedEarthLocation} scaleLabel={earthScale} onModeChange={changeEarthViewMode} onLocationSelect={selectEarthLocation} onClear={clearEarthLocation} onSetObserver={setSelectedAsObserver} mapLayers={mapLayers} onToggleMapLayer={toggleMapLayer} showSelectedLocationDetails={false} /></div>
             <div className={mobileInfoTab === "satellites" ? "mobile-info-pane active" : "mobile-info-pane"}><div className="mobile-stack"><SearchPanel query={query} results={results} onQueryChange={setQuery} onClear={() => setQuery("")} onSelectSatellite={selectSatellite} /><FeaturedPanel featured={catalogData.featured} selectedId={selectedId} onSelectSatellite={selectSatellite} /><IdentityPanel selected={selected} /><SatelliteStatePanels state={state} characteristics={characteristics} selected={selected} /></div></div>
             <div className={mobileInfoTab === "layers" ? "mobile-info-pane active" : "mobile-info-pane"}><div className="mobile-stack"><ObserverPanel observer={observer} setObserver={setObserver} passes={passes} /><MethodologyPanel onOpenGuide={() => setAboutOpen(true)} /></div></div>
           </section>
@@ -652,7 +718,7 @@ export default function OrbitalDashboard() {
 
       <div className="lower-grid"><ObserverPanel observer={observer} setObserver={setObserver} passes={passes} /><MethodologyPanel onOpenGuide={() => setAboutOpen(true)} /></div>
 
-      <footer><span>YTS Orbital v0.1</span><a href="https://yorktechservices.com" target="_blank" rel="noreferrer">York Tech Services</a><a href="https://celestrak.org" target="_blank" rel="noreferrer">Orbital data provided by CelesTrak</a><span>Not for safety-critical operations</span></footer>
+      <footer><span>YTS Orbital v0.2</span><a href="https://yorktechservices.com" target="_blank" rel="noreferrer">York Tech Services</a><a href="https://celestrak.org" target="_blank" rel="noreferrer">Orbital data provided by CelesTrak</a><span>Not for safety-critical operations</span></footer>
 
       {aboutOpen && <GuideDrawer onClose={() => setAboutOpen(false)} />}
     </div>

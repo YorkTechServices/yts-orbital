@@ -4,7 +4,7 @@
 
 ## Plain-language picture
 
-Earth Explorer lets a learner choose a place in three ways: click the globe, click one of 24 city pins, or search by text. It then asks server routes for geographic names and context, focuses the camera, and can copy that location into the pass-prediction observer.
+Earth Explorer lets a learner choose a place in three ways: click the globe, click one of 41 city pins, or search by text. It then asks server routes for geographic names and context, focuses the camera, and can copy that location into the pass-prediction observer.
 
 It works even when the CelesTrak feed is unavailable because its routes and state are independent of satellite data.
 
@@ -43,7 +43,7 @@ sequenceDiagram
 
 A generic globe click uses React Three Fiber’s intersection `event.point`. `scenePositionToLatLon(event.point)` converts that point into geographic coordinates. No manual `Raycaster` is created.
 
-A city-pin click already has known coordinates. `MAJOR_CITIES` in `components/globe/earth-scene.tsx` contains 24 city records.
+A city-pin click already has known coordinates. `MAJOR_CITIES` in `components/globe/earth-scene.tsx` contains 41 city records split between global-priority and closer regional labels.
 
 Both paths create `SelectedEarthLocation` with `source: "globe"`. A text-search choice uses `source: "search"`.
 
@@ -118,6 +118,10 @@ On the first location selection, `OrbitalDashboard` stores the previous non-loca
 `clearEarthLocation()` removes the selection and returns to `returnViewMode`, except during a satellite-feed error, when it returns to `"earth"`.
 
 `CameraController` detects mode or focus-coordinate changes and smoothly transitions toward the selected surface direction. Manual controls remain available outside satellite mode.
+
+The selected point keeps a persistent label anchored to its geographic surface position. Rotating the globe moves the label with that point instead of leaving a screen-space tooltip behind.
+
+The full selected-location card is rendered in the `GEOSPATIAL VISUALIZATION / EARTH FIXED` header immediately above the globe. The lower `GEOSPATIAL SURFACE` panel retains view controls, Map Details, and search but does not duplicate the selected-location card. On mobile, a new location scrolls the globe header into view so the place name, administrative context, coordinates, sourced details, and actions are visible before the map.
 
 ## Observer handoff
 

@@ -17,6 +17,8 @@ All displayed positions and trajectories are calculated from public orbital elem
 - Real-time latitude, longitude, altitude, and velocity
 - Interactive procedural 3D Earth with an Earth-fixed spacecraft marker
 - Earth Explorer globe selection, coordinate extraction, and smooth camera focus
+- Optional, zoom-aware country and state/province boundaries
+- Camera-aware city, satellite, and surface-selection marker sizing
 - Server-side geographic search with OpenStreetMap Nominatim
 - Earth, Location, and Satellite camera modes
 - Actual sampled orbital trajectory visualization
@@ -81,6 +83,12 @@ Globe clicks and search selections also call the server-side `/api/reverse-geoco
 
 Earth Explorer remains operational when the CelesTrak catalog is unavailable. In this degraded mode, the application clearly marks satellite data as offline, disables satellite camera mode, and retains globe interaction, place search, reverse geographic context, coordinate selection, and observer placement. The client refreshes both the catalog and selected orbital record every five minutes during normal operation and retries every minute during an outage. It also retries immediately when the browser reconnects or a degraded tab becomes visible. The outage notice can be acknowledged without stopping retries; recovery restores the full dashboard and raises a separate green confirmation notice.
 
+### Map Details
+
+Earth Explorer includes independent controls for country boundaries, state/province boundaries, and city labels. Country detail is useful from global through local views. State/province detail is lazy-loaded only after it is enabled and the camera enters regional range. Disabling a boundary tier disposes its Three.js geometry; a later re-enable reuses the browser module cache rather than issuing another network request.
+
+The central layer registry records stable IDs, display names, categories, Earth support, default and current visibility, useful camera-distance ranges, source attribution, loading and error state, optional legend metadata, and lazy-load behavior. This provides the base contract for later Earth or planetary layers without coupling data preparation to Three.js rendering.
+
 The forward and inverse transforms share one Earth-fixed convention: ECEF `+X` is 0° longitude, ECEF `+Y` is 90° east, and ECEF `+Z` is north; Three.js scene axes use `[ECEF x, ECEF z, -ECEF y]`. Continents, observer, selected location, sub-satellite point, and spacecraft position therefore remain aligned while Time Machine changes the propagated satellite state.
 
 Earth Explorer is intentionally limited to global, regional, and orbital-scale exploration. It is not a terrestrial GIS, navigation tool, or street-mapping platform.
@@ -112,6 +120,8 @@ Orbital elements come from the [CelesTrak Active Satellites GP catalog](https://
 CelesTrak data is fetched only by the Next.js server layer. Framework fetch caching uses a 7,200-second revalidation interval to avoid repeatedly downloading an unchanged catalog. Local SGP4 propagation updates the spacecraft state; the application does not re-download elements on each tick.
 
 The local holographic coastline layer uses the 1:110m land topology from [`world-atlas`](https://github.com/topojson/world-atlas), derived from public-domain [Natural Earth](https://www.naturalearthdata.com/) data. No geographic asset is fetched at runtime.
+
+Map Details uses Natural Earth vector release 5.1.2 at 1:110m scale: Admin 0 boundary lines for countries and Admin 1 states/provinces lines. Natural Earth data is public domain. The checked-in assets contain line coordinates only, rounded to 0.01 degrees with adjacent duplicates removed, antimeridian crossings split, and long segments densified to follow the globe surface. Regenerate them with `npm run prepare:map-details`; production clients load the resulting local JSON chunks, never the source GeoJSON URLs.
 
 Location search is provided by [OpenStreetMap Nominatim](https://nominatim.org/). Requests are made server-side, only after explicit searches, and successful responses are cached for 24 hours. Search data is © OpenStreetMap contributors.
 
@@ -149,7 +159,7 @@ AOS, maximum sampled elevation, LOS, duration, and AOS azimuth are derived from 
 Orbital visualization and propagation
 
 ### v0.2
-Enhanced ground station and pass analysis
+Earth UX and Map Details foundation
 
 ### v0.3
 Constellation visualization and analysis

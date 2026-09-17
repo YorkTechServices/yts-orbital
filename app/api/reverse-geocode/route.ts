@@ -5,6 +5,7 @@ const NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
 const BIG_DATA_CLOUD_URL = "https://api.bigdatacloud.net/data/reverse-geocode-client";
 const OPEN_METEO_ELEVATION_URL = "https://api.open-meteo.com/v1/elevation";
 const OPEN_METEO_GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search";
+const MAX_LOCATION_HINT_LENGTH = 120;
 
 interface NominatimReverseResult {
   error?: string;
@@ -297,7 +298,7 @@ function normalizeLocation(
 export async function GET(request: NextRequest) {
   const latitude = Number(request.nextUrl.searchParams.get("lat"));
   const longitude = Number(request.nextUrl.searchParams.get("lon"));
-  const locationHint = text(request.nextUrl.searchParams.get("hint"));
+  const locationHint = text(request.nextUrl.searchParams.get("hint"))?.slice(0, MAX_LOCATION_HINT_LENGTH);
   if (
     !Number.isFinite(latitude) || !Number.isFinite(longitude) ||
     latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180

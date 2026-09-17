@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, type ThreeEvent, useFrame } from "@react-three/fiber";
 import { Html, Line, OrbitControls, Stars } from "@react-three/drei";
 import { feature } from "topojson-client";
@@ -8,6 +8,8 @@ import type { GeometryCollection, Topology } from "topojson-specification";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import * as THREE from "three";
 import landTopology from "@/data/land-110m.json";
+import MapDetailsLayer from "@/components/globe/map-details-layer";
+import type { MapLayerId, MapLayerLoadState, MapLayerStateById } from "@/lib/layers/map-layers";
 import { latLonToScenePosition, scenePositionToLatLon } from "@/lib/orbital/engine";
 import type { EarthViewMode, ObserverLocation, PropagatedState, SelectedEarthLocation } from "@/types/orbital";
 
@@ -17,8 +19,11 @@ interface EarthSceneProps {
   satelliteName: string;
   observer: ObserverLocation;
   selectedLocation: SelectedEarthLocation | null;
+  mapLayers: MapLayerStateById;
   viewMode: EarthViewMode;
   onLocationSelect: (location: SelectedEarthLocation) => void;
+  onSatelliteSelect?: () => void;
+  onLayerLoadStateChange: (id: MapLayerId, loadState: MapLayerLoadState, error?: string) => void;
   onScaleChange: (scale: string) => void;
 }
 
@@ -37,28 +42,45 @@ interface NightLightCenter {
 
 const MAJOR_CITIES: MajorCity[] = [
   { name: "New York", latitude: 40.7128, longitude: -74.006, priority: true },
+  { name: "Chicago", latitude: 41.8781, longitude: -87.6298 },
   { name: "Los Angeles", latitude: 34.0522, longitude: -118.2437 },
   { name: "Mexico City", latitude: 19.4326, longitude: -99.1332, priority: true },
   { name: "Toronto", latitude: 43.6532, longitude: -79.3832 },
+  { name: "Bogotá", latitude: 4.711, longitude: -74.0721, priority: true },
+  { name: "Lima", latitude: -12.0464, longitude: -77.0428 },
   { name: "São Paulo", latitude: -23.5505, longitude: -46.6333, priority: true },
+  { name: "Rio de Janeiro", latitude: -22.9068, longitude: -43.1729 },
   { name: "Buenos Aires", latitude: -34.6037, longitude: -58.3816 },
   { name: "London", latitude: 51.5074, longitude: -0.1278, priority: true },
   { name: "Paris", latitude: 48.8566, longitude: 2.3522 },
+  { name: "Madrid", latitude: 40.4168, longitude: -3.7038 },
   { name: "Istanbul", latitude: 41.0082, longitude: 28.9784 },
   { name: "Moscow", latitude: 55.7558, longitude: 37.6173 },
   { name: "Cairo", latitude: 30.0444, longitude: 31.2357, priority: true },
-  { name: "Lagos", latitude: 6.5244, longitude: 3.3792 },
+  { name: "Lagos", latitude: 6.5244, longitude: 3.3792, priority: true },
+  { name: "Kinshasa", latitude: -4.4419, longitude: 15.2663, priority: true },
+  { name: "Nairobi", latitude: -1.2921, longitude: 36.8219 },
   { name: "Johannesburg", latitude: -26.2041, longitude: 28.0473 },
   { name: "Dubai", latitude: 25.2048, longitude: 55.2708 },
+  { name: "Riyadh", latitude: 24.7136, longitude: 46.6753 },
   { name: "Delhi", latitude: 28.6139, longitude: 77.209, priority: true },
-  { name: "Mumbai", latitude: 19.076, longitude: 72.8777 },
-  { name: "Beijing", latitude: 39.9042, longitude: 116.4074 },
-  { name: "Shanghai", latitude: 31.2304, longitude: 121.4737 },
+  { name: "Mumbai", latitude: 19.076, longitude: 72.8777, priority: true },
+  { name: "Karachi", latitude: 24.8607, longitude: 67.0011, priority: true },
+  { name: "Dhaka", latitude: 23.8103, longitude: 90.4125, priority: true },
+  { name: "Kolkata", latitude: 22.5726, longitude: 88.3639 },
+  { name: "Bengaluru", latitude: 12.9716, longitude: 77.5946 },
+  { name: "Bangkok", latitude: 13.7563, longitude: 100.5018 },
+  { name: "Beijing", latitude: 39.9042, longitude: 116.4074, priority: true },
+  { name: "Shanghai", latitude: 31.2304, longitude: 121.4737, priority: true },
+  { name: "Guangzhou", latitude: 23.1291, longitude: 113.2644, priority: true },
   { name: "Tokyo", latitude: 35.6762, longitude: 139.6503, priority: true },
+  { name: "Osaka", latitude: 34.6937, longitude: 135.5023 },
   { name: "Seoul", latitude: 37.5665, longitude: 126.978 },
   { name: "Singapore", latitude: 1.3521, longitude: 103.8198 },
-  { name: "Jakarta", latitude: -6.2088, longitude: 106.8456 },
+  { name: "Jakarta", latitude: -6.2088, longitude: 106.8456, priority: true },
+  { name: "Manila", latitude: 14.5995, longitude: 120.9842, priority: true },
   { name: "Sydney", latitude: -33.8688, longitude: 151.2093, priority: true },
+  { name: "Melbourne", latitude: -37.8136, longitude: 144.9631 },
   { name: "Auckland", latitude: -36.8509, longitude: 174.7645 },
 ];
 
@@ -276,9 +298,12 @@ function GroundMarker({ latitude, longitude, color }: {
     [position],
   );
 
-  useFrame(({ camera }) => {
+  useFrame(({ camera, size }) => {
     if (!markerRef.current) return;
-    const scale = THREE.MathUtils.clamp((camera.position.length() - 2.4) / 3.2, 0.42, 1);
+    const distance = camera.position.distanceTo(position);
+    const perspectiveCamera = camera as THREE.PerspectiveCamera;
+    const worldPerPixel = 2 * Math.tan(THREE.MathUtils.degToRad(perspectiveCamera.fov) / 2) * distance / size.height;
+    const scale = THREE.MathUtils.clamp((worldPerPixel * 12) / 0.086, 0.3, 1.15);
     markerRef.current.scale.setScalar(scale);
   });
 
@@ -303,6 +328,8 @@ function CityMarker({ city, onLocationSelect }: {
   const labelRef = useRef<HTMLSpanElement>(null);
   const labelVisible = useRef(false);
   const markerRef = useRef<THREE.Group>(null);
+  const markerMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const ringMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const position = useMemo(
     () => new THREE.Vector3(...latLonToScenePosition(city.latitude, city.longitude, 2.025)),
     [city.latitude, city.longitude],
@@ -313,14 +340,22 @@ function CityMarker({ city, onLocationSelect }: {
     [surfaceNormal],
   );
 
-  useFrame(({ camera }) => {
+  useFrame(({ camera, size }) => {
     const cameraDistance = camera.position.length();
+    const distanceToMarker = camera.position.distanceTo(position);
+    const perspectiveCamera = camera as THREE.PerspectiveCamera;
+    const worldPerPixel = 2 * Math.tan(THREE.MathUtils.degToRad(perspectiveCamera.fov) / 2) * distanceToMarker / size.height;
+    const scale = THREE.MathUtils.clamp((worldPerPixel * (city.priority ? 13 : 11)) / 0.086, 0.28, 1.12);
     if (markerRef.current) {
-      const scale = THREE.MathUtils.clamp((cameraDistance - 2.4) / 3.2, 0.42, 1);
       markerRef.current.scale.setScalar(scale);
     }
+    const tierOpacity = city.priority
+      ? 1
+      : 1 - THREE.MathUtils.smoothstep(cameraDistance, 5.25, 6.2);
+    if (markerMaterialRef.current) markerMaterialRef.current.opacity = tierOpacity;
+    if (ringMaterialRef.current) ringMaterialRef.current.opacity = tierOpacity * 0.66;
     const facing = position.dot(camera.position) / (position.length() * camera.position.length());
-    const labelEligible = city.priority || camera.position.length() < 4.65;
+    const labelEligible = city.priority || cameraDistance < 4.85;
     const visible = labelEligible && facing > (labelVisible.current ? 0.04 : 0.16);
     if (labelRef.current && visible !== labelVisible.current) {
       labelVisible.current = visible;
@@ -330,7 +365,7 @@ function CityMarker({ city, onLocationSelect }: {
   });
 
   const selectCity = (event: ThreeEvent<MouseEvent>) => {
-    if (event.delta > 6) return;
+    if (event.delta > 8) return;
     event.stopPropagation();
     onLocationSelect({
       latitude: city.latitude,
@@ -345,53 +380,83 @@ function CityMarker({ city, onLocationSelect }: {
     <group ref={markerRef} position={position} quaternion={quaternion} onClick={selectCity}>
       <mesh>
         <circleGeometry args={[0.022, 18]} />
-        <meshBasicMaterial color="#7ee5df" side={THREE.DoubleSide} />
+        <meshBasicMaterial ref={markerMaterialRef} color="#7ee5df" transparent side={THREE.DoubleSide} />
       </mesh>
       <mesh>
         <ringGeometry args={[0.035, 0.043, 24]} />
-        <meshBasicMaterial color="#4ab7b7" transparent opacity={0.72} side={THREE.DoubleSide} />
+        <meshBasicMaterial ref={ringMaterialRef} color="#4ab7b7" transparent opacity={0.66} side={THREE.DoubleSide} />
       </mesh>
       <mesh>
         <circleGeometry args={[0.075, 16]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
-      <Html center distanceFactor={7.5} zIndexRange={[3, 1]} style={{ pointerEvents: "none" }}>
+      <Html center zIndexRange={[3, 1]} style={{ pointerEvents: "none" }}>
         <span ref={labelRef} className="city-pin-label">{city.name.toUpperCase()}</span>
       </Html>
     </group>
   );
 }
 
-function SpacecraftMarker({ position }: { position: [number, number, number] }) {
+function SpacecraftMarker({ position, onSelect }: {
+  position: [number, number, number];
+  onSelect?: () => void;
+}) {
+  const visualRef = useRef<THREE.Group>(null);
   const halo = useRef<THREE.Mesh>(null);
-  useFrame(({ clock }) => {
-    if (!halo.current) return;
-    const scale = 1 + Math.sin(clock.elapsedTime * 3) * 0.1;
-    halo.current.scale.setScalar(scale);
+  useFrame(({ camera, clock, size }) => {
+    if (!halo.current || !visualRef.current?.parent) return;
+    const distance = camera.position.distanceTo(visualRef.current.parent.position);
+    const perspectiveCamera = camera as THREE.PerspectiveCamera;
+    const worldPerPixel = 2 * Math.tan(THREE.MathUtils.degToRad(perspectiveCamera.fov) / 2) * distance / size.height;
+    visualRef.current.scale.setScalar(THREE.MathUtils.clamp((worldPerPixel * 13) / 0.056, 0.35, 1.25));
+    halo.current.scale.setScalar(1 + Math.sin(clock.elapsedTime * 2.4) * 0.055);
   });
+  const selectSatellite = (event: ThreeEvent<MouseEvent>) => {
+    if (event.delta > 8) return;
+    event.stopPropagation();
+    onSelect?.();
+  };
   return (
-    <group position={position} onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()}>
-      <mesh>
-        <sphereGeometry args={[0.055, 16, 16]} />
-        <meshBasicMaterial color="#e8fdff" />
-      </mesh>
-      <mesh ref={halo}>
-        <sphereGeometry args={[0.09, 18, 18]} />
-        <meshBasicMaterial color="#5de8e8" transparent opacity={0.12} depthWrite={false} />
-      </mesh>
-      <pointLight color="#67ffff" intensity={1.2} distance={0.9} />
+    <group
+      position={position}
+      onClick={selectSatellite}
+      onPointerDown={(event) => event.stopPropagation()}
+      onPointerUp={(event) => event.stopPropagation()}
+      onPointerOver={() => { document.body.style.cursor = "pointer"; }}
+      onPointerOut={() => { document.body.style.cursor = ""; }}
+    >
+      <group ref={visualRef}>
+        <mesh>
+          <sphereGeometry args={[0.028, 14, 14]} />
+          <meshBasicMaterial color="#e8fdff" />
+        </mesh>
+        <mesh ref={halo}>
+          <sphereGeometry args={[0.046, 16, 16]} />
+          <meshBasicMaterial color="#5de8e8" transparent opacity={0.08} depthWrite={false} />
+        </mesh>
+        <mesh>
+          <sphereGeometry args={[0.085, 10, 10]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+      </group>
+      {onSelect && <Html center zIndexRange={[5, 3]}>
+        <button
+          type="button"
+          className="satellite-hit-target"
+          aria-label="Switch to satellite follow mode"
+          title="Follow satellite"
+          onClick={(event) => { event.stopPropagation(); onSelect(); }}
+        />
+      </Html>}
     </group>
   );
 }
 
 function SelectedLocationMarker({ location }: { location: SelectedEarthLocation }) {
+  const markerRef = useRef<THREE.Group>(null);
   const pulse = useRef<THREE.Mesh>(null);
   const surface = useMemo(
     () => new THREE.Vector3(...latLonToScenePosition(location.latitude, location.longitude, 2.045)),
-    [location.latitude, location.longitude],
-  );
-  const tip = useMemo(
-    () => latLonToScenePosition(location.latitude, location.longitude, 2.2),
     [location.latitude, location.longitude],
   );
   const quaternion = useMemo(
@@ -399,24 +464,29 @@ function SelectedLocationMarker({ location }: { location: SelectedEarthLocation 
     [surface],
   );
 
-  useFrame(({ clock }) => {
-    if (!pulse.current) return;
-    const scale = 1 + (Math.sin(clock.elapsedTime * 4) + 1) * 0.28;
-    pulse.current.scale.setScalar(scale);
+  useFrame(({ camera, clock, size }) => {
+    if (!pulse.current || !markerRef.current) return;
+    const distance = camera.position.distanceTo(surface);
+    const perspectiveCamera = camera as THREE.PerspectiveCamera;
+    const worldPerPixel = 2 * Math.tan(THREE.MathUtils.degToRad(perspectiveCamera.fov) / 2) * distance / size.height;
+    markerRef.current.scale.setScalar(THREE.MathUtils.clamp((worldPerPixel * 18) / 0.116, 0.28, 1.1));
+    pulse.current.scale.setScalar(1 + (Math.sin(clock.elapsedTime * 3) + 1) * 0.06);
   });
 
   return (
     <group onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()}>
-      <Line points={[surface.toArray(), tip]} color="#f4c56b" transparent opacity={0.78} lineWidth={1} />
-      <group position={surface} quaternion={quaternion}>
+      <group ref={markerRef} position={surface} quaternion={quaternion}>
         <mesh>
-          <ringGeometry args={[0.045, 0.065, 28]} />
-          <meshBasicMaterial color="#ffd27a" transparent opacity={0.95} side={THREE.DoubleSide} />
+          <ringGeometry args={[0.038, 0.046, 28]} />
+          <meshBasicMaterial color="#ffd27a" transparent opacity={0.88} side={THREE.DoubleSide} />
         </mesh>
         <mesh ref={pulse}>
-          <ringGeometry args={[0.08, 0.094, 32]} />
-          <meshBasicMaterial color="#ffc861" transparent opacity={0.42} side={THREE.DoubleSide} depthWrite={false} />
+          <ringGeometry args={[0.052, 0.058, 32]} />
+          <meshBasicMaterial color="#ffc861" transparent opacity={0.24} side={THREE.DoubleSide} depthWrite={false} />
         </mesh>
+        <Html center zIndexRange={[4, 2]} style={{ pointerEvents: "none" }}>
+          <span className="selected-location-pin-label">{location.details?.primaryName ?? location.displayName ?? "Selected location"}</span>
+        </Html>
       </group>
     </group>
   );
@@ -446,6 +516,15 @@ function CameraController({ mode, selectedLocation, state, onScaleChange }: {
   const previousMode = useRef<EarthViewMode | null>(null);
   const previousFocus = useRef("");
   const previousScale = useRef("");
+  const [touchControls, setTouchControls] = useState(false);
+
+  useEffect(() => {
+    const query = window.matchMedia("(pointer: coarse)");
+    const update = () => setTouchControls(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
 
   useEffect(() => {
     const focus = selectedLocation ? `${selectedLocation.latitude},${selectedLocation.longitude}` : "";
@@ -470,7 +549,7 @@ function CameraController({ mode, selectedLocation, state, onScaleChange }: {
     let desiredDistance = destination.length();
     if (mode === "location" && selectedLocation) {
       destination = new THREE.Vector3(...latLonToScenePosition(selectedLocation.latitude, selectedLocation.longitude, 1));
-      desiredDistance = 3.75;
+      desiredDistance = 3.9;
     } else if (mode === "satellite" && state) {
       destination = new THREE.Vector3(...state.displayPosition).normalize();
       desiredDistance = 6.1;
@@ -495,14 +574,14 @@ function CameraController({ mode, selectedLocation, state, onScaleChange }: {
     transitioning.current = false;
   };
 
-  return <OrbitControls ref={controls} enablePan={false} enableRotate={mode !== "satellite"} enableZoom={mode !== "satellite"} enableDamping minDistance={2.4} maxDistance={10} zoomSpeed={0.3} autoRotate={false} onStart={takeManualControl} />;
+  return <OrbitControls ref={controls} enablePan={false} enableRotate={mode !== "satellite"} enableZoom={mode !== "satellite"} enableDamping dampingFactor={touchControls ? 0.1 : 0.06} rotateSpeed={touchControls ? 0.22 : 0.55} minDistance={2.4} maxDistance={10} zoomSpeed={touchControls ? 0.22 : 0.3} autoRotate={false} onStart={takeManualControl} />;
 }
 
 function ClickableEarth({ onLocationSelect }: { onLocationSelect: EarthSceneProps["onLocationSelect"] }) {
   useEffect(() => () => { document.body.style.cursor = ""; }, []);
 
   const selectPoint = (event: ThreeEvent<MouseEvent>) => {
-    if (event.delta > 6) return;
+    if (event.delta > 8) return;
     event.stopPropagation();
     const { latitude, longitude } = scenePositionToLatLon(event.point);
     onLocationSelect({ latitude, longitude, source: "globe" });
@@ -520,7 +599,7 @@ function ClickableEarth({ onLocationSelect }: { onLocationSelect: EarthSceneProp
   );
 }
 
-function Scene({ state, orbitPath, observer, selectedLocation, viewMode, onLocationSelect, onScaleChange }: Omit<EarthSceneProps, "satelliteName">) {
+function Scene({ state, orbitPath, observer, selectedLocation, mapLayers, viewMode, onLocationSelect, onSatelliteSelect, onLayerLoadStateChange, onScaleChange }: Omit<EarthSceneProps, "satelliteName">) {
   const stateTimestamp = state?.timestamp;
   const sunDirection = useMemo(
     () => solarDirection(stateTimestamp ? new Date(stateTimestamp) : new Date()),
@@ -547,14 +626,15 @@ function Scene({ state, orbitPath, observer, selectedLocation, viewMode, onLocat
       </mesh>
       <Graticule />
       <Coastlines />
+      <MapDetailsLayer layers={mapLayers} onLoadStateChange={onLayerLoadStateChange} />
       <NightCityLights sunDirection={sunDirection} />
-      {MAJOR_CITIES.map((city) => <CityMarker key={city.name} city={city} onLocationSelect={onLocationSelect} />)}
+      {mapLayers["city-labels"].visible && MAJOR_CITIES.map((city) => <CityMarker key={city.name} city={city} onLocationSelect={onLocationSelect} />)}
       <GroundMarker latitude={observer.latitude} longitude={observer.longitude} color="#ffd27a" />
       {orbitPath.length > 1 && (
         <Line points={orbitPath} color="#62edf0" lineWidth={1.4} transparent opacity={0.78} />
       )}
       {selectedLocation && <SelectedLocationMarker location={selectedLocation} />}
-      {state && <><SubSatellitePoint state={state} /><SpacecraftMarker position={state.displayPosition} /></>}
+      {state && <><SubSatellitePoint state={state} /><SpacecraftMarker position={state.displayPosition} onSelect={onSatelliteSelect} /></>}
       <CameraController mode={viewMode} selectedLocation={selectedLocation} state={state} onScaleChange={onScaleChange} />
     </>
   );
@@ -567,7 +647,7 @@ export default function EarthScene(props: EarthSceneProps) {
       aria-label={`Interactive orbital view of ${props.satelliteName}`}
     >
       <Canvas camera={{ position: [4.6, 2.7, 5.2], fov: 42 }} dpr={[1, 1.75]}>
-        <Scene state={props.state} orbitPath={props.orbitPath} observer={props.observer} selectedLocation={props.selectedLocation} viewMode={props.viewMode} onLocationSelect={props.onLocationSelect} onScaleChange={props.onScaleChange} />
+        <Scene state={props.state} orbitPath={props.orbitPath} observer={props.observer} selectedLocation={props.selectedLocation} mapLayers={props.mapLayers} viewMode={props.viewMode} onLocationSelect={props.onLocationSelect} onSatelliteSelect={props.onSatelliteSelect} onLayerLoadStateChange={props.onLayerLoadStateChange} onScaleChange={props.onScaleChange} />
       </Canvas>
       <div className="globe-reticle" aria-hidden="true" />
       <div className="globe-caption"><span>ECF FRAME · MAJOR CITIES PINNED</span><span>{props.viewMode === "satellite" ? "SATELLITE FOLLOW LOCKED" : "DRAG TO ROTATE · SCROLL TO CITY SCALE"}</span></div>

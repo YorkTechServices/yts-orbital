@@ -101,6 +101,11 @@ export interface SelectedEarthLocation {
   details?: LocationDetails;
 }
 
+export type SelectedEntity =
+  | { type: "none" }
+  | { type: "location"; latitude: number; longitude: number }
+  | { type: "satellite"; noradId: number };
+
 export interface ReverseGeocodeResponse {
   displayName: string;
   details: LocationDetails;

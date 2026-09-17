@@ -6,7 +6,7 @@
 
 ## How to use this guide
 
-Start with the plain-language overview, then follow the numbered chapters. Chapters 01–12 explain the application and its implementation; chapters 13–16 help you discuss, practice, and extend what you learned.
+Start with the plain-language overview, then follow the numbered chapters. Chapters 01–12 explain the application and its implementation; chapters 13–16 help you discuss, practice, and extend what you learned. Chapter 17 records the v0.2 Earth UX and Map Details foundation.
 
 The code is the final authority. When these notes and the implementation disagree, verify the current source before changing behavior.
 
@@ -37,6 +37,7 @@ The code is the final authority. When these notes and the implementation disagre
 14. [Study exercises](14-exercises.md) — Bounded changes that build familiarity without handing over complete implementations.
 15. [Glossary](15-glossary.md) — Concise definitions for the satellite, web, React, and 3D terms used throughout the project.
 16. [Learning roadmap](16-learning-roadmap.md) — A staged path from reading this codebase to confidently extending satellite software.
+17. [v0.2 Earth UX and Map Details](17-v0.2-earth-ux-and-map-details.md) — Layer controls, Natural Earth preprocessing, selection priority, performance, and limitations.
 
 ## Repository landmarks
 
@@ -45,6 +46,8 @@ The code is the final authority. When these notes and the implementation disagre
 | Page entry | `app/page.tsx` | Renders `OrbitalDashboard`. |
 | Main client controller | `components/dashboard/orbital-dashboard.tsx` | Owns catalog, satellite, time, observer, and Earth Explorer state. |
 | Globe | `components/globe/earth-scene.tsx` | Renders and controls the React Three Fiber Earth scene. |
+| Map layer renderer | `components/globe/map-details-layer.tsx` | Lazy-loads and renders optional boundary tiers. |
+| Layer registry | `lib/layers/map-layers.ts` | Defines layer metadata, visibility, useful range, and loading state. |
 | Earth search panel | `components/earth-explorer/earth-explorer-panel.tsx` | Searches for places and presents selected-location details. |
 | Server catalog service | `lib/celestrak/service.ts` | Fetches, caches, validates, and shapes CelesTrak OMM data. |
 | Orbital engine | `lib/orbital/engine.ts` | Converts OMM data, propagates states, transforms frames, and predicts passes. |

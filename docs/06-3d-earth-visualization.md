@@ -24,7 +24,7 @@ flowchart TB
     S --> GR[Graticule]
     S --> CO[Coastlines]
     S --> NL[NightCityLights]
-    S --> MC[24 CityMarker instances]
+    S --> MC[41 CityMarker instances]
     S --> GM[GroundMarker]
     S --> OL[Orbit Line]
     S --> SL[SelectedLocationMarker]
@@ -61,7 +61,7 @@ The city-light clusters are decorative approximations, not a population or live-
 
 ## City pins
 
-`MAJOR_CITIES` contains exactly 24 entries. `Scene` renders one `CityMarker` per entry. Some entries have `priority: true`; their labels can remain eligible at wider camera distances. Other labels appear when the camera gets closer.
+`MAJOR_CITIES` contains 41 curated metropolitan references. `Scene` renders one `CityMarker` per entry. Globally significant megacities use `priority: true`, making their labels eligible at wider camera distances. Other labels appear when the camera gets closer, limiting global-view clutter.
 
 Each marker converts its latitude and longitude through `latLonToScenePosition`. A quaternion aligns its circles to the local surface normal.
 
@@ -82,7 +82,7 @@ The implementation does **not** manually construct a Three.js `Raycaster`. React
 - `GroundMarker` shows the current observer.
 - `SelectedLocationMarker` shows a stem, ring, and animated pulse.
 - `SubSatellitePoint` connects the surface point below the satellite to its true display position.
-- `SpacecraftMarker` shows a bright sphere, animated halo, and point light.
+- `SpacecraftMarker` shows a bounded bright sphere, subtle animated halo, and larger invisible interaction sphere. Clicking that interaction target switches Earth or Location view into Satellite follow mode.
 - The orbit path is a Drei `Line` when at least two points exist.
 
 The spacecraft’s marker size is a visual symbol; unlike altitude distance, marker size is not physically to scale.

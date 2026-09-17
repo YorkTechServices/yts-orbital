@@ -56,6 +56,8 @@ The main interactive files begin with `"use client"` because they use browser AP
 8. `propagateSatellite(satrec, simulationTime)` creates the displayed state.
 9. `EarthScene` renders the marker and path.
 
+`LoadingScreen` keeps an accessible percentage bar visible throughout this sequence. The visual sequence advances from 0% and caps at 94% while catalog data is unavailable, changing its status to `WAITING FOR ORBITAL CATALOG` instead of falsely reporting completion. It reaches 100% only when the catalog is ready and the startup animation has completed.
+
 ## Why the catalog and satellite routes are separate
 
 `CatalogResponse.catalog` contains compact `SatelliteCatalogEntry` values suitable for search. A selected satellite needs the complete `OmmRecord` required by `json2satrec`. The smaller search model avoids keeping repeated full orbital records in dashboard state.

@@ -1,6 +1,6 @@
 {
   "name": "yts-orbital",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Satellite operations and orbital intelligence powered by CelesTrak GP data and SGP4.",
   "private": true,
   "scripts": {
@@ -8,7 +8,8 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepare:map-details": "node scripts/prepare-map-details.mjs"
   },
   "keywords": [
     "satellite",
