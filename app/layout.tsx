@@ -3,14 +3,14 @@ import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://yorktechservices.com"),
+  metadataBase: new URL("https://orbital.yorktechservices.com"),
   title: "YTS Orbital | Satellite Operations & Orbital Intelligence",
   description: "Explore current public orbital elements with SGP4 propagation, interactive 3D visualization, time simulation, and geometric pass prediction.",
-  alternates: { canonical: "/orbital" },
+  alternates: { canonical: "/" },
   openGraph: {
     title: "YTS Orbital",
     description: "Satellite Operations & Orbital Intelligence",
-    url: "/orbital",
+    url: "/",
     siteName: "York Tech Services",
     images: [{ url: "/opengraph-image", width: 1200, height: 630, alt: "YTS Orbital mission dashboard" }],
     type: "website",
