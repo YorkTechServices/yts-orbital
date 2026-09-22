@@ -12,10 +12,10 @@ export const metadata: Metadata = {
     description: "Satellite Operations & Orbital Intelligence",
     url: "/",
     siteName: "York Tech Services",
-    images: [{ url: "/opengraph-image", width: 1200, height: 630, alt: "YTS Orbital mission dashboard" }],
+    images: [{ url: "/applications-orbital-preview.png", width: 537, height: 360, alt: "YTS Orbital mission dashboard" }],
     type: "website",
   },
-  twitter: { card: "summary_large_image", title: "YTS Orbital", description: "Satellite Operations & Orbital Intelligence", images: ["/opengraph-image"] },
+  twitter: { card: "summary_large_image", title: "YTS Orbital", description: "Satellite Operations & Orbital Intelligence", images: ["/applications-orbital-preview.png"] },
 };
 
 export const viewport: Viewport = { themeColor: "#03070b", colorScheme: "dark" };
