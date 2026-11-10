@@ -236,3 +236,20 @@ footer { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 28px;
   .selected-location.selected-location--active .location-intelligence { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { .loader-orbit { animation: none; } .startup-reveal, .startup-step { opacity: 1; transform: none; filter: none; transition: none; } .startup-headline.is-visible::after, .startup-cursor, .startup-progress.is-waiting .startup-progress__track b, .loading-start-button.is-ready .loading-start-button__core { animation: none; } }
+/* Accuracy/source status is deliberately visible; never label undated clouds "live". */
+.earth-imagery-status { position: absolute; z-index: 2; left: 14px; bottom: 31px; display: flex; flex-direction: column; gap: 3px; max-width: min(380px, calc(100% - 28px)); padding: 8px 10px; border-left: 2px solid rgba(83, 197, 203, .55); background: rgba(3, 12, 16, .78); color: #b8d6d9; font: 9px "Cascadia Mono", monospace; letter-spacing: .25px; line-height: 1.35; pointer-events: none; }
+.earth-imagery-status span:nth-child(2) { color: #7bd5d0; }
+.earth-imagery-status small { margin-top: 3px; color: #76969d; font-size: 8px; }
+@media (max-width: 520px) { .earth-imagery-status { left: 8px; bottom: 28px; padding: 6px 7px; font-size: 8px; } .earth-imagery-status small { font-size: 7px; } }
+
+/* Optional astronomical geometry layer; excluded from mouse/touch navigation. */
+.globe-solar-geometry-controls { position: absolute; z-index: 3; top: 12px; left: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-width: min(275px, calc(100% - 24px)); pointer-events: none; }
+.globe-solar-geometry-controls button { min-height: 32px; padding: 0 10px; border: 1px solid rgba(255, 201, 108, .38); background: rgba(4, 14, 20, .91); color: #ffd28b; font: 9px "Cascadia Mono", monospace; letter-spacing: .5px; cursor: pointer; pointer-events: auto; }
+.globe-solar-geometry-controls button[aria-pressed="true"] { background: rgba(149, 95, 22, .24); border-color: rgba(255, 201, 108, .72); }
+.globe-solar-geometry-controls button:hover, .globe-solar-geometry-controls button:focus-visible { border-color: #ffd28b; outline-offset: 2px; }
+.globe-solar-geometry-key { display: grid; gap: 4px; padding: 8px 10px; background: rgba(4, 14, 20, .88); border-left: 2px solid rgba(255, 201, 108, .6); color: #bed0d7; font: 9px "Cascadia Mono", monospace; line-height: 1.5; }
+.globe-solar-geometry-key span { white-space: nowrap; }
+.globe-solar-geometry-key b { display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; vertical-align: middle; }
+.globe-solar-geometry-key .solar-key-sun { background: #ffc66e; }
+.globe-solar-geometry-key .solar-key-moon { background: #83dbff; }
+@media (max-width: 520px) { .globe-solar-geometry-controls { top: 7px; left: 7px; } .globe-solar-geometry-key { font-size: 8px; } }

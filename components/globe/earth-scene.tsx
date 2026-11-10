@@ -8,6 +8,9 @@ import type { GeometryCollection, Topology } from "topojson-specification";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import * as THREE from "three";
 import landTopology from "@/data/land-110m.json";
+import { celestialPositions } from "@/lib/astronomy/celestial";
+import { terminatorPoints } from "@/lib/astronomy/terminator";
+import { useObservedClouds, useSeasonalEarthTexture } from "@/components/globe/earth-imagery";
 import MapDetailsLayer from "@/components/globe/map-details-layer";
 import type { MapLayerId, MapLayerLoadState, MapLayerStateById } from "@/lib/layers/map-layers";
 import { latLonToScenePosition, scenePositionToLatLon } from "@/lib/orbital/engine";
@@ -15,6 +18,8 @@ import type { EarthViewMode, ObserverLocation, PropagatedState, SelectedEarthLoc
 
 interface EarthSceneProps {
   state: PropagatedState | null;
+  simulationTime: Date;
+  isLive: boolean;
   orbitPath: [number, number, number][];
   satelliteName: string;
   observer: ObserverLocation;
@@ -110,24 +115,6 @@ const NIGHT_LIGHT_CENTERS: NightLightCenter[] = [
   { latitude: -37.81, longitude: 144.96, intensity: 0.66 }, { latitude: -36.85, longitude: 174.76, intensity: 0.54 },
 ];
 
-function solarDirection(date: Date) {
-  const julianDate = date.getTime() / 86_400_000 + 2_440_587.5;
-  const daysSinceJ2000 = julianDate - 2_451_545;
-  const meanLongitude = THREE.MathUtils.degToRad((280.46 + 0.9856474 * daysSinceJ2000) % 360);
-  const meanAnomaly = THREE.MathUtils.degToRad((357.528 + 0.9856003 * daysSinceJ2000) % 360);
-  const eclipticLongitude = meanLongitude + THREE.MathUtils.degToRad(1.915) * Math.sin(meanAnomaly) + THREE.MathUtils.degToRad(0.02) * Math.sin(2 * meanAnomaly);
-  const obliquity = THREE.MathUtils.degToRad(23.439 - 0.0000004 * daysSinceJ2000);
-  const declination = Math.asin(Math.sin(obliquity) * Math.sin(eclipticLongitude));
-  const rightAscension = Math.atan2(Math.cos(obliquity) * Math.sin(eclipticLongitude), Math.cos(eclipticLongitude));
-  const siderealDegrees = (280.46061837 + 360.98564736629 * daysSinceJ2000) % 360;
-  const subsolarLongitude = THREE.MathUtils.radToDeg(rightAscension) - siderealDegrees;
-  return new THREE.Vector3(...latLonToScenePosition(
-    THREE.MathUtils.radToDeg(declination),
-    ((subsolarLongitude + 540) % 360) - 180,
-    1,
-  )).normalize();
-}
-
 function NightCityLights({ sunDirection }: { sunDirection: THREE.Vector3 }) {
   const materialRef = useRef<THREE.ShaderMaterial>(null);
   const geometry = useMemo(() => {
@@ -187,7 +174,7 @@ function NightCityLights({ sunDirection }: { sunDirection: THREE.Vector3 }) {
           varying float vAlpha;
           void main() {
             float sunExposure = dot(normalize(position), normalize(uSunDirection));
-            float night = 1.0 - smoothstep(-0.28, 0.06, sunExposure);
+            float night = 1.0 - smoothstep(-0.05, 0.02, sunExposure);
             float glisten = 0.86 + 0.14 * sin(uTime * (0.32 + aIntensity * 0.24) + aPhase);
             vAlpha = night * aIntensity * glisten;
             vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
@@ -577,7 +564,7 @@ function CameraController({ mode, selectedLocation, state, onScaleChange }: {
   return <OrbitControls ref={controls} enablePan={false} enableRotate={mode !== "satellite"} enableZoom={mode !== "satellite"} enableDamping dampingFactor={touchControls ? 0.1 : 0.06} rotateSpeed={touchControls ? 0.22 : 0.55} minDistance={2.4} maxDistance={10} zoomSpeed={touchControls ? 0.22 : 0.3} autoRotate={false} onStart={takeManualControl} />;
 }
 
-function ClickableEarth({ onLocationSelect }: { onLocationSelect: EarthSceneProps["onLocationSelect"] }) {
+function ClickableEarth({ onLocationSelect, texture }: { onLocationSelect: EarthSceneProps["onLocationSelect"]; texture: THREE.Texture | null }) {
   useEffect(() => () => { document.body.style.cursor = ""; }, []);
 
   const selectPoint = (event: ThreeEvent<MouseEvent>) => {
@@ -593,29 +580,45 @@ function ClickableEarth({ onLocationSelect }: { onLocationSelect: EarthSceneProp
       onPointerOver={() => { document.body.style.cursor = "crosshair"; }}
       onPointerOut={() => { document.body.style.cursor = ""; }}
     >
-      <sphereGeometry args={[2, 72, 72]} />
-      <meshStandardMaterial color="#082837" roughness={0.78} metalness={0.08} />
+      <sphereGeometry args={[2, 128, 96]} />
+      <meshStandardMaterial map={texture ?? undefined} color={texture ? "#ffffff" : "#082837"} roughness={0.9} metalness={0} />
     </mesh>
   );
 }
 
-function Scene({ state, orbitPath, observer, selectedLocation, mapLayers, viewMode, onLocationSelect, onSatelliteSelect, onLayerLoadStateChange, onScaleChange }: Omit<EarthSceneProps, "satelliteName">) {
-  const stateTimestamp = state?.timestamp;
-  const sunDirection = useMemo(
-    () => solarDirection(stateTimestamp ? new Date(stateTimestamp) : new Date()),
-    [stateTimestamp],
+function SolarGeometryOverlay({ sun, moon }: {
+  sun: ReturnType<typeof celestialPositions>["sun"];
+  moon: ReturnType<typeof celestialPositions>["moon"];
+}) {
+  const boundary = useMemo(() => terminatorPoints(sun.direction), [sun]);
+  return (
+    <group>
+      {/* This is a geometric day/night boundary; real terrain/cloud shadows differ. */}
+      <Line points={boundary} color="#ffd384" transparent opacity={0.8} lineWidth={1.5} raycast={() => undefined} />
+      <GroundMarker latitude={sun.latitude} longitude={sun.longitude} color="#ffc66e" />
+      <GroundMarker latitude={moon.latitude} longitude={moon.longitude} color="#83dbff" />
+    </group>
   );
+}
+
+function Scene({ state, simulationTime, orbitPath, observer, selectedLocation, mapLayers, viewMode, onLocationSelect, onSatelliteSelect, onLayerLoadStateChange, onScaleChange, surfaceTexture, cloudTexture, showSolarGeometry }: Omit<EarthSceneProps, "satelliteName" | "isLive"> & { surfaceTexture: THREE.Texture | null; cloudTexture: THREE.Texture | null; showSolarGeometry: boolean }) {
+  const celestial = useMemo(() => celestialPositions(simulationTime), [simulationTime]);
+  const sunDirection = useMemo(() => new THREE.Vector3(...celestial.sun.direction), [celestial]);
   const sunlightPosition = sunDirection.clone().multiplyScalar(8).toArray();
-  const nightFillPosition = sunDirection.clone().multiplyScalar(-6).toArray();
 
   return (
     <>
       <color attach="background" args={["#03070b"]} />
-      <ambientLight intensity={0.16} />
-      <directionalLight position={sunlightPosition} color="#e9fbff" intensity={2.9} />
-      <directionalLight position={nightFillPosition} color="#064856" intensity={0.22} />
+      <ambientLight intensity={0.025} />
+      <directionalLight position={sunlightPosition} color="#fff7ed" intensity={3.1} />
       <Stars radius={70} depth={35} count={1700} factor={2.3} saturation={0.12} fade speed={0.2} />
-      <ClickableEarth onLocationSelect={onLocationSelect} />
+      <ClickableEarth onLocationSelect={onLocationSelect} texture={surfaceTexture} />
+      {cloudTexture && (
+        <mesh raycast={() => undefined}>
+          <sphereGeometry args={[2.012, 128, 96]} />
+          <meshStandardMaterial map={cloudTexture} transparent opacity={0.91} depthWrite={false} roughness={1} metalness={0} />
+        </mesh>
+      )}
       <mesh scale={1.035} raycast={() => undefined}>
         <sphereGeometry args={[2, 64, 64]} />
         <meshBasicMaterial color="#36d7df" transparent opacity={0.08} side={THREE.BackSide} />
@@ -628,6 +631,7 @@ function Scene({ state, orbitPath, observer, selectedLocation, mapLayers, viewMo
       <Coastlines />
       <MapDetailsLayer layers={mapLayers} onLoadStateChange={onLayerLoadStateChange} />
       <NightCityLights sunDirection={sunDirection} />
+      {showSolarGeometry && <SolarGeometryOverlay sun={celestial.sun} moon={celestial.moon} />}
       {mapLayers["city-labels"].visible && MAJOR_CITIES.map((city) => <CityMarker key={city.name} city={city} onLocationSelect={onLocationSelect} />)}
       <GroundMarker latitude={observer.latitude} longitude={observer.longitude} color="#ffd27a" />
       {orbitPath.length > 1 && (
@@ -641,14 +645,42 @@ function Scene({ state, orbitPath, observer, selectedLocation, mapLayers, viewMo
 }
 
 export default function EarthScene(props: EarthSceneProps) {
+  const [showSolarGeometry, setShowSolarGeometry] = useState(false);
+  const surface = useSeasonalEarthTexture(props.simulationTime.getUTCMonth() + 1);
+  const clouds = useObservedClouds(props.isLive);
+  const celestial = useMemo(() => celestialPositions(props.simulationTime), [props.simulationTime]);
+  const moon = celestial.moon;
   return (
     <div
       className="globe-canvas"
       aria-label={`Interactive orbital view of ${props.satelliteName}`}
     >
       <Canvas camera={{ position: [4.6, 2.7, 5.2], fov: 42 }} dpr={[1, 1.75]}>
-        <Scene state={props.state} orbitPath={props.orbitPath} observer={props.observer} selectedLocation={props.selectedLocation} mapLayers={props.mapLayers} viewMode={props.viewMode} onLocationSelect={props.onLocationSelect} onSatelliteSelect={props.onSatelliteSelect} onLayerLoadStateChange={props.onLayerLoadStateChange} onScaleChange={props.onScaleChange} />
+        <Scene state={props.state} orbitPath={props.orbitPath} observer={props.observer} selectedLocation={props.selectedLocation} mapLayers={props.mapLayers} viewMode={props.viewMode} onLocationSelect={props.onLocationSelect} onSatelliteSelect={props.onSatelliteSelect} onLayerLoadStateChange={props.onLayerLoadStateChange} onScaleChange={props.onScaleChange} simulationTime={props.simulationTime} surfaceTexture={surface.texture} cloudTexture={clouds.texture} showSolarGeometry={showSolarGeometry} />
       </Canvas>
+      <div className="globe-solar-geometry-controls">
+        <button
+          type="button"
+          aria-pressed={showSolarGeometry}
+          aria-label="Toggle day and night boundary and Sun and Moon ground points"
+          onClick={() => setShowSolarGeometry((current) => !current)}
+        >
+          {showSolarGeometry ? "☀ SOLAR GUIDE: ON" : "☀ SOLAR GUIDE"}
+        </button>
+        {showSolarGeometry && (
+          <div className="globe-solar-geometry-key">
+            <span><b className="solar-key-sun" /> Sun overhead: {celestial.sun.latitude.toFixed(1)}°, {celestial.sun.longitude.toFixed(1)}°</span>
+            <span><b className="solar-key-moon" /> Moon overhead: {moon.latitude.toFixed(1)}°, {moon.longitude.toFixed(1)}°</span>
+            <span>Gold curve: approximate day/night boundary</span>
+          </div>
+        )}
+      </div>
+      <div className="earth-imagery-status" aria-live="polite">
+        <span>{surface.label}</span>
+        <span>{clouds.label}</span>
+        <span>MOON {Math.round(moon.illuminatedFraction * 100)}% LIT · SUBLUNAR {moon.latitude.toFixed(1)}°, {moon.longitude.toFixed(1)}°</span>
+        <small>SURFACE: NASA · CLOUDS: Contains modified EUMETSAT data via matteason</small>
+      </div>
       <div className="globe-reticle" aria-hidden="true" />
       <div className="globe-caption"><span>ECF FRAME · MAJOR CITIES PINNED</span><span>{props.viewMode === "satellite" ? "SATELLITE FOLLOW LOCKED" : "DRAG TO ROTATE · SCROLL TO CITY SCALE"}</span></div>
     </div>
